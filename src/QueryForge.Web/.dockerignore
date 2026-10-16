@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+npm-debug.log*
+.vscode/
+.idea/
+Dockerfile
+.dockerignore

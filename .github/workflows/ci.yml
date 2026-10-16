@@ -92,3 +92,28 @@ jobs:
 
       - name: Type-check and build
         run: npm run build
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Interpolation needs a value for the required password; this placeholder is not a secret and nothing is started.
+      - name: Validate Compose file
+        env:
+          MSSQL_SA_PASSWORD: ci-placeholder-not-a-secret
+        run: docker compose config --quiet
+
+      # Images are built to catch Dockerfile errors; nothing is pushed.
+      - name: Build API image
+        run: docker build --file src/QueryForge.Api/Dockerfile --target api --tag queryforge-api:ci .
+
+      - name: Build migrator image
+        run: docker build --file src/QueryForge.Api/Dockerfile --target migrator --tag queryforge-migrator:ci .
+
+      - name: Build web image
+        run: docker build --tag queryforge-web:ci src/QueryForge.Web

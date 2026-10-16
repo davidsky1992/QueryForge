@@ -1,3 +1,5 @@
+// Unset: local `npm run dev` against the API on its launchSettings port.
+// Empty string (Docker image default): same-origin relative URLs, proxied to the API by nginx.
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5111";
 
 export class ApiError extends Error {

@@ -1,0 +1,35 @@
+# Build context for the API and migrator images is the repository root.
+# Only global.json, Directory.Build.props, and the .NET projects under src/ are needed.
+
+# Secrets and local configuration
+.env
+.env.*
+**/secrets.json
+**/appsettings.*.local.json
+**/*.pfx
+
+# Build and test output
+**/bin/
+**/obj/
+**/TestResults/
+**/coverage/
+
+# Not part of the API image
+tests/
+docs/
+src/QueryForge.Web/
+**/node_modules/
+**/dist/
+
+# Repository and IDE metadata
+.git/
+.github/
+.vs/
+.vscode/
+.idea/
+**/*.user
+**/*.suo
+*.md
+docker-compose*.yml
+**/Dockerfile*
+**/.dockerignore

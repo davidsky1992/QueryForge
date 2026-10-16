@@ -7,6 +7,12 @@
 *.yaml text eol=lf
 *.sln text eol=crlf
 
+# Files consumed inside Linux containers keep LF even on Windows checkouts.
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+*.template text eol=lf
+*.conf text eol=lf
+
 # Binary files
 *.png binary
 *.jpg binary
