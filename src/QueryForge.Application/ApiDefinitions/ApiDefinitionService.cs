@@ -46,7 +46,7 @@ public sealed class ApiDefinitionService : IApiDefinitionService
 
     public async Task<Result<ApiDefinitionDto>> UpdateAsync(Guid id, UpdateApiDefinitionRequest request, CancellationToken cancellationToken)
     {
-        var validationIssues = ApiDefinitionValidator.Validate(request);
+        var validationIssues = ApiDefinitionValidator.Validate(request, out var originalRowVersion);
         if (validationIssues.Count > 0)
         {
             return Result<ApiDefinitionDto>.Invalid(validationIssues);
@@ -63,6 +63,7 @@ public sealed class ApiDefinitionService : IApiDefinitionService
             return Result<ApiDefinitionDto>.Failure(Errors.Conflict, "An API definition with this slug already exists.");
         }
 
+        _repository.SetOriginalRowVersion(apiDefinition, originalRowVersion);
         apiDefinition.Update(
             request.Name,
             request.Slug,
@@ -74,21 +75,35 @@ public sealed class ApiDefinitionService : IApiDefinitionService
             request.Tags,
             _timeProvider.GetUtcNow());
 
-        await _repository.SaveChangesAsync(cancellationToken);
+        if (!await TrySaveChangesAsync(cancellationToken))
+        {
+            return ConcurrencyConflict();
+        }
 
         return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto());
     }
 
-    public async Task<Result<ApiDefinitionDto>> DeleteAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<Result<ApiDefinitionDto>> DeleteAsync(Guid id, string? rowVersion, CancellationToken cancellationToken)
     {
+        var validationIssues = ApiDefinitionValidator.ValidateRowVersion(rowVersion, out var originalRowVersion);
+        if (validationIssues.Count > 0)
+        {
+            return Result<ApiDefinitionDto>.Invalid(validationIssues);
+        }
+
         var apiDefinition = await _repository.GetByIdAsync(id, cancellationToken);
         if (apiDefinition is null)
         {
             return Result<ApiDefinitionDto>.Failure(Errors.NotFound, "API definition was not found.");
         }
 
+        _repository.SetOriginalRowVersion(apiDefinition, originalRowVersion);
         _repository.Remove(apiDefinition);
-        await _repository.SaveChangesAsync(cancellationToken);
+
+        if (!await TrySaveChangesAsync(cancellationToken))
+        {
+            return ConcurrencyConflict();
+        }
 
         return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto());
     }
@@ -108,5 +123,25 @@ public sealed class ApiDefinitionService : IApiDefinitionService
         var items = page.Items.Select(item => item.ToDto()).ToArray();
 
         return new PagedResult<ApiDefinitionDto>(items, page.PageNumber, page.PageSize, page.TotalCount);
+    }
+
+    private async Task<bool> TrySaveChangesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _repository.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (ConcurrencyConflictException)
+        {
+            return false;
+        }
+    }
+
+    private static Result<ApiDefinitionDto> ConcurrencyConflict()
+    {
+        return Result<ApiDefinitionDto>.Failure(
+            Errors.ConcurrencyConflict,
+            "The API definition was modified or deleted by someone else. Reload it and try again.");
     }
 }

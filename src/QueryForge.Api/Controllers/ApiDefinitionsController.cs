@@ -71,10 +71,12 @@ public sealed class ApiDefinitionsController : ControllerBase
 
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Delete(Guid id, [FromQuery] string? rowVersion, CancellationToken cancellationToken)
     {
-        var result = await _apiDefinitionService.DeleteAsync(id, cancellationToken);
+        var result = await _apiDefinitionService.DeleteAsync(id, rowVersion, cancellationToken);
 
         return result.IsSuccess ? NoContent() : ToActionResult(result).Result!;
     }
@@ -104,6 +106,13 @@ public sealed class ApiDefinitionsController : ControllerBase
                 Title = "Conflict",
                 Detail = result.ErrorMessage,
                 Status = StatusCodes.Status409Conflict
+            }),
+            Errors.ConcurrencyConflict => Conflict(new ProblemDetails
+            {
+                Title = "Concurrency conflict",
+                Detail = result.ErrorMessage,
+                Status = StatusCodes.Status409Conflict,
+                Extensions = { ["code"] = Errors.ConcurrencyConflict }
             }),
             _ => BadRequest(new ProblemDetails
             {

@@ -7,6 +7,8 @@ namespace QueryForge.Application.Tests;
 public sealed class ApiDefinitionServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 15, 11, 0, 0, TimeSpan.Zero);
+    private static readonly byte[] CurrentVersion = [0, 0, 0, 0, 0, 0, 0, 2];
+    private static readonly byte[] StaleVersion = [0, 0, 0, 0, 0, 0, 0, 1];
 
     [Fact]
     public async Task CreateAsync_WithValidRequest_CreatesDefinition()
@@ -38,16 +40,7 @@ public sealed class ApiDefinitionServiceTests
     public async Task CreateAsync_WithDuplicateSlug_ReturnsConflict()
     {
         var repository = new FakeApiDefinitionRepository();
-        repository.Items.Add(ApiDefinition.Create(
-            "Orders API",
-            "orders-api",
-            null,
-            "https://api.example.test",
-            ApiDefinitionStatus.Active,
-            ApiAuthenticationType.None,
-            null,
-            null,
-            Now));
+        repository.Seed(CreateDefinition(), CurrentVersion);
         var service = CreateService(repository);
 
         var result = await service.CreateAsync(ValidCreateRequest(), CancellationToken.None);
@@ -61,7 +54,108 @@ public sealed class ApiDefinitionServiceTests
     {
         var service = CreateService(new FakeApiDefinitionRepository());
 
-        var result = await service.UpdateAsync(Guid.NewGuid(), ValidUpdateRequest(), CancellationToken.None);
+        var result = await service.UpdateAsync(Guid.NewGuid(), ValidUpdateRequest(CurrentVersion), CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(Errors.NotFound, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithCurrentRowVersion_UpdatesDefinition()
+    {
+        var repository = new FakeApiDefinitionRepository();
+        var existing = repository.Seed(CreateDefinition(), CurrentVersion);
+        var service = CreateService(repository);
+        var request = ValidUpdateRequest(CurrentVersion) with { Name = "Orders API v2" };
+
+        var result = await service.UpdateAsync(existing.Id, request, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Orders API v2", result.Value!.Name);
+        Assert.Equal(Now, result.Value.UpdatedAtUtc);
+        Assert.Equal(1, repository.SuccessfulSaves);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithStaleRowVersion_ReturnsConcurrencyConflict()
+    {
+        var repository = new FakeApiDefinitionRepository();
+        var existing = repository.Seed(CreateDefinition(), CurrentVersion);
+        var service = CreateService(repository);
+
+        var result = await service.UpdateAsync(existing.Id, ValidUpdateRequest(StaleVersion), CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(Errors.ConcurrencyConflict, result.ErrorCode);
+        Assert.Equal(0, repository.SuccessfulSaves);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-base64!")]
+    [InlineData("AAAAAAAAAAAAAAAA")] // valid base64, but 12 bytes instead of 8
+    public async Task UpdateAsync_WithMissingOrMalformedRowVersion_ReturnsValidationFailure(string? rowVersion)
+    {
+        var repository = new FakeApiDefinitionRepository();
+        var existing = repository.Seed(CreateDefinition(), CurrentVersion);
+        var service = CreateService(repository);
+        var request = ValidUpdateRequest(CurrentVersion) with { RowVersion = rowVersion! };
+
+        var result = await service.UpdateAsync(existing.Id, request, CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(Errors.Validation, result.ErrorCode);
+        Assert.Contains(result.ValidationIssues, issue => issue.Field == "rowVersion");
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WithCurrentRowVersion_RemovesDefinition()
+    {
+        var repository = new FakeApiDefinitionRepository();
+        var existing = repository.Seed(CreateDefinition(), CurrentVersion);
+        var service = CreateService(repository);
+
+        var result = await service.DeleteAsync(existing.Id, Convert.ToBase64String(CurrentVersion), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(repository.Items);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WithStaleRowVersion_ReturnsConcurrencyConflictAndKeepsDefinition()
+    {
+        var repository = new FakeApiDefinitionRepository();
+        var existing = repository.Seed(CreateDefinition(), CurrentVersion);
+        var service = CreateService(repository);
+
+        var result = await service.DeleteAsync(existing.Id, Convert.ToBase64String(StaleVersion), CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(Errors.ConcurrencyConflict, result.ErrorCode);
+        Assert.Single(repository.Items);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WithoutRowVersion_ReturnsValidationFailure()
+    {
+        var repository = new FakeApiDefinitionRepository();
+        var existing = repository.Seed(CreateDefinition(), CurrentVersion);
+        var service = CreateService(repository);
+
+        var result = await service.DeleteAsync(existing.Id, rowVersion: null, CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(Errors.Validation, result.ErrorCode);
+        Assert.Single(repository.Items);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenDefinitionDoesNotExist_ReturnsNotFound()
+    {
+        var service = CreateService(new FakeApiDefinitionRepository());
+
+        var result = await service.DeleteAsync(Guid.NewGuid(), Convert.ToBase64String(CurrentVersion), CancellationToken.None);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(Errors.NotFound, result.ErrorCode);
@@ -84,6 +178,20 @@ public sealed class ApiDefinitionServiceTests
         return new ApiDefinitionService(repository, new FixedTimeProvider(Now));
     }
 
+    private static ApiDefinition CreateDefinition()
+    {
+        return ApiDefinition.Create(
+            "Orders API",
+            "orders-api",
+            null,
+            "https://api.example.test",
+            ApiDefinitionStatus.Active,
+            ApiAuthenticationType.None,
+            null,
+            null,
+            Now.AddDays(-1));
+    }
+
     private static CreateApiDefinitionRequest ValidCreateRequest()
     {
         return new CreateApiDefinitionRequest(
@@ -97,7 +205,7 @@ public sealed class ApiDefinitionServiceTests
             "orders,internal");
     }
 
-    private static UpdateApiDefinitionRequest ValidUpdateRequest()
+    private static UpdateApiDefinitionRequest ValidUpdateRequest(byte[] rowVersion)
     {
         return new UpdateApiDefinitionRequest(
             "Orders API",
@@ -107,12 +215,29 @@ public sealed class ApiDefinitionServiceTests
             ApiDefinitionStatus.Active,
             ApiAuthenticationType.BearerToken,
             "https://docs.example.test/orders",
-            "orders,internal");
+            "orders,internal",
+            Convert.ToBase64String(rowVersion));
     }
 
+    /// <summary>
+    /// In-memory repository that mimics the database's rowversion check: a save fails when the
+    /// original row version set by the caller differs from the stored version.
+    /// </summary>
     private sealed class FakeApiDefinitionRepository : IApiDefinitionRepository
     {
+        private readonly Dictionary<Guid, byte[]> _storedVersions = [];
+        private readonly Dictionary<Guid, byte[]> _originalVersions = [];
+        private readonly List<ApiDefinition> _pendingRemovals = [];
+
         public List<ApiDefinition> Items { get; } = [];
+        public int SuccessfulSaves { get; private set; }
+
+        public ApiDefinition Seed(ApiDefinition apiDefinition, byte[] storedVersion)
+        {
+            Items.Add(apiDefinition);
+            _storedVersions[apiDefinition.Id] = storedVersion;
+            return apiDefinition;
+        }
 
         public Task<ApiDefinition?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
         {
@@ -148,11 +273,35 @@ public sealed class ApiDefinitionServiceTests
 
         public void Remove(ApiDefinition apiDefinition)
         {
-            Items.Remove(apiDefinition);
+            _pendingRemovals.Add(apiDefinition);
+        }
+
+        public void SetOriginalRowVersion(ApiDefinition apiDefinition, byte[] rowVersion)
+        {
+            _originalVersions[apiDefinition.Id] = rowVersion;
         }
 
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {
+            foreach (var (id, original) in _originalVersions)
+            {
+                if (!_storedVersions.TryGetValue(id, out var stored) || !stored.AsSpan().SequenceEqual(original))
+                {
+                    _originalVersions.Clear();
+                    _pendingRemovals.Clear();
+                    throw new ConcurrencyConflictException("Stale row version.", new InvalidOperationException());
+                }
+            }
+
+            foreach (var removed in _pendingRemovals)
+            {
+                Items.Remove(removed);
+                _storedVersions.Remove(removed.Id);
+            }
+
+            _originalVersions.Clear();
+            _pendingRemovals.Clear();
+            SuccessfulSaves++;
             return Task.CompletedTask;
         }
     }

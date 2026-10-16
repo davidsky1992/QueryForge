@@ -76,7 +76,7 @@ export default function App() {
 
     try {
       const saved = editing
-        ? await updateApiDefinition(editing.id, form)
+        ? await updateApiDefinition(editing.id, editing.rowVersion, form)
         : await createApiDefinition(form);
 
       setMessage(editing ? "API definition updated." : "API definition created.");
@@ -85,7 +85,7 @@ export default function App() {
       setSelected(saved);
       await load();
     } catch (error) {
-      setMessage(toMessage(error));
+      await handleMutationError(error);
     }
   }
 
@@ -95,13 +95,25 @@ export default function App() {
     }
 
     try {
-      await deleteApiDefinition(apiDefinition.id);
+      await deleteApiDefinition(apiDefinition.id, apiDefinition.rowVersion);
       setMessage("API definition deleted.");
       setSelected(null);
       await load();
     } catch (error) {
-      setMessage(toMessage(error));
+      await handleMutationError(error);
     }
+  }
+
+  async function handleMutationError(error: unknown) {
+    if (error instanceof ApiError && error.isConcurrencyConflict) {
+      // The edit was based on an outdated copy; discard it and show the latest data.
+      resetForm();
+      await load();
+      setMessage("This record was changed by someone else. The list has been reloaded; please review and try again.");
+      return;
+    }
+
+    setMessage(toMessage(error));
   }
 
   function startEdit(apiDefinition: ApiDefinition) {

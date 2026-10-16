@@ -10,4 +10,5 @@ public sealed record UpdateApiDefinitionRequest(
     ApiDefinitionStatus Status,
     ApiAuthenticationType AuthenticationType,
     string? DocumentationUrl,
-    string? Tags);
+    string? Tags,
+    string RowVersion);

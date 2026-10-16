@@ -37,15 +37,21 @@ export function createApiDefinition(values: ApiDefinitionFormValues): Promise<Ap
   });
 }
 
-export function updateApiDefinition(id: string, values: ApiDefinitionFormValues): Promise<ApiDefinition> {
+export function updateApiDefinition(
+  id: string,
+  rowVersion: string,
+  values: ApiDefinitionFormValues
+): Promise<ApiDefinition> {
   return request<ApiDefinition>(`/api/api-definitions/${id}`, {
     method: "PUT",
-    body: JSON.stringify(normalizePayload(values))
+    body: JSON.stringify({ ...normalizePayload(values), rowVersion })
   });
 }
 
-export function deleteApiDefinition(id: string): Promise<void> {
-  return request<void>(`/api/api-definitions/${id}`, {
+export function deleteApiDefinition(id: string, rowVersion: string): Promise<void> {
+  const query = new URLSearchParams({ rowVersion });
+
+  return request<void>(`/api/api-definitions/${id}?${query.toString()}`, {
     method: "DELETE"
   });
 }

@@ -69,8 +69,22 @@ internal sealed class EfApiDefinitionRepository : IApiDefinitionRepository
         _dbContext.ApiDefinitions.Remove(apiDefinition);
     }
 
-    public Task SaveChangesAsync(CancellationToken cancellationToken)
+    public void SetOriginalRowVersion(ApiDefinition apiDefinition, byte[] rowVersion)
     {
-        return _dbContext.SaveChangesAsync(cancellationToken);
+        // EF Core uses the original value in the UPDATE/DELETE WHERE clause, so the version check
+        // and the write happen atomically in the database.
+        _dbContext.Entry(apiDefinition).Property(entity => entity.RowVersion).OriginalValue = rowVersion;
+    }
+
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            throw new ConcurrencyConflictException("The record was modified or deleted after it was read.", exception);
+        }
     }
 }

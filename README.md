@@ -59,6 +59,24 @@ npm run dev --prefix src/QueryForge.Web
 
 Open Swagger at the API `/swagger` endpoint and the Vite app at `http://localhost:5173`.
 
+## Health Checks
+
+| Endpoint | Purpose | Status codes |
+|---|---|---|
+| `GET /health/live` | Liveness: the process is responding; no dependencies are checked. | `200` |
+| `GET /health` | Readiness: SQL Server and Redis are checked independently (3 s timeout each). | `200` Healthy/Degraded, `503` Unhealthy |
+
+SQL Server is required, so its failure makes the API `Unhealthy`. Redis only backs the optional distributed cache, so its failure reports `Degraded`. Responses contain status, a generic description, and duration per check; exception messages and connection details are never returned.
+
+## Optimistic Concurrency
+
+Every API definition response includes a `rowVersion`. Clients must send it back when changing a record:
+
+- `PUT /api/api-definitions/{id}` with `rowVersion` in the JSON body.
+- `DELETE /api/api-definitions/{id}?rowVersion={rowVersion}` (URL-encoded).
+
+If the record changed since it was read, the API returns `409 Conflict` with `"code": "concurrency_conflict"`. A missing or malformed `rowVersion` returns `400`.
+
 ## Windows 8 GB RAM Notes
 
 - Keep SQL Server and Redis in Docker, but run the API and frontend directly on Windows.

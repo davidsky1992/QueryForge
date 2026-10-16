@@ -8,7 +8,7 @@ public interface IApiDefinitionService
 
     Task<Result<ApiDefinitionDto>> UpdateAsync(Guid id, UpdateApiDefinitionRequest request, CancellationToken cancellationToken);
 
-    Task<Result<ApiDefinitionDto>> DeleteAsync(Guid id, CancellationToken cancellationToken);
+    Task<Result<ApiDefinitionDto>> DeleteAsync(Guid id, string? rowVersion, CancellationToken cancellationToken);
 
     Task<Result<ApiDefinitionDto>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
 

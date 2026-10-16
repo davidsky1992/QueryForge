@@ -9,6 +9,14 @@ export class ApiError extends Error {
     this.status = status;
     this.details = details;
   }
+
+  public get isConcurrencyConflict(): boolean {
+    return this.status === 409
+      && typeof this.details === "object"
+      && this.details !== null
+      && "code" in this.details
+      && this.details.code === "concurrency_conflict";
+  }
 }
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {

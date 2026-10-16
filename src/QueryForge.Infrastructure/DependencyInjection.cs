@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.StackExchangeRedis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using QueryForge.Application.ApiDefinitions;
 using QueryForge.Infrastructure.ApiDefinitions;
 using QueryForge.Infrastructure.Persistence;
+using StackExchange.Redis;
 
 namespace QueryForge.Infrastructure;
 
@@ -24,11 +26,19 @@ public static class DependencyInjection
         var redisConnectionString = configuration.GetConnectionString("Redis");
         if (!string.IsNullOrWhiteSpace(redisConnectionString))
         {
-            services.AddStackExchangeRedisCache(options =>
+            // One shared multiplexer serves both the distributed cache and the Redis health check.
+            // AbortOnConnectFail=false lets the API start while Redis is down and reconnect in the background.
+            services.AddSingleton<IConnectionMultiplexer>(_ =>
             {
-                options.Configuration = redisConnectionString;
-                options.InstanceName = "QueryForge:";
+                var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
+                redisOptions.AbortOnConnectFail = false;
+                return ConnectionMultiplexer.Connect(redisOptions);
             });
+
+            services.AddStackExchangeRedisCache(options => options.InstanceName = "QueryForge:");
+            services.AddOptions<RedisCacheOptions>()
+                .Configure<IConnectionMultiplexer>((options, multiplexer) =>
+                    options.ConnectionMultiplexerFactory = () => Task.FromResult(multiplexer));
         }
         else
         {

@@ -1,14 +1,21 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using QueryForge.Api.Health;
 using QueryForge.Api.Middleware;
 using QueryForge.Application;
 using QueryForge.Infrastructure;
-using QueryForge.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// SQL Server is required to serve requests, so its failure makes the API unhealthy (HTTP 503).
+// Redis only backs the optional distributed cache, so its failure is reported as degraded (HTTP 200).
+var healthCheckTimeout = TimeSpan.FromSeconds(3);
+builder.Services.AddHealthChecks()
+    .AddCheck<SqlServerHealthCheck>("sqlServer", HealthStatus.Unhealthy, timeout: healthCheckTimeout)
+    .AddCheck<RedisHealthCheck>("redis", HealthStatus.Degraded, timeout: healthCheckTimeout);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -42,22 +49,17 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.MapControllers();
 
-app.MapGet("/health", async (
-    QueryForgeDbContext dbContext,
-    IDistributedCache cache,
-    CancellationToken cancellationToken) =>
+// Readiness: checks every dependency and reports each one independently.
+app.MapHealthChecks("/health", new HealthCheckOptions
 {
-    var databaseReady = await dbContext.Database.CanConnectAsync(cancellationToken);
-    await cache.SetStringAsync("health", "ok", cancellationToken);
+    ResponseWriter = HealthResponseWriter.WriteAsync
+});
 
-    return Results.Ok(new
-    {
-        status = databaseReady ? "Healthy" : "Degraded",
-        database = databaseReady ? "Reachable" : "Unreachable",
-        cache = "Reachable"
-    });
-})
-.WithName("Health")
-.WithOpenApi();
+// Liveness: confirms the process is responding without touching dependencies.
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false,
+    ResponseWriter = HealthResponseWriter.WriteAsync
+});
 
 app.Run();

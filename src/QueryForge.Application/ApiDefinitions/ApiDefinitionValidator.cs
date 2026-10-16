@@ -12,6 +12,9 @@ internal static partial class ApiDefinitionValidator
     private const int UrlMaxLength = 2048;
     private const int TagsMaxLength = 500;
 
+    // SQL Server rowversion values are always 8 bytes.
+    private const int RowVersionLength = 8;
+
     public static IReadOnlyList<ValidationIssue> Validate(CreateApiDefinitionRequest request)
     {
         return ValidateCore(
@@ -25,9 +28,9 @@ internal static partial class ApiDefinitionValidator
             request.Tags);
     }
 
-    public static IReadOnlyList<ValidationIssue> Validate(UpdateApiDefinitionRequest request)
+    public static IReadOnlyList<ValidationIssue> Validate(UpdateApiDefinitionRequest request, out byte[] parsedRowVersion)
     {
-        return ValidateCore(
+        var issues = ValidateCore(
             request.Name,
             request.Slug,
             request.Description,
@@ -36,6 +39,27 @@ internal static partial class ApiDefinitionValidator
             request.AuthenticationType,
             request.DocumentationUrl,
             request.Tags);
+
+        return [.. issues, .. ValidateRowVersion(request.RowVersion, out parsedRowVersion)];
+    }
+
+    public static IReadOnlyList<ValidationIssue> ValidateRowVersion(string? rowVersion, out byte[] parsedRowVersion)
+    {
+        parsedRowVersion = [];
+
+        if (string.IsNullOrWhiteSpace(rowVersion))
+        {
+            return [new ValidationIssue(nameof(rowVersion), "rowVersion is required.")];
+        }
+
+        var buffer = new byte[RowVersionLength];
+        if (!Convert.TryFromBase64String(rowVersion, buffer, out var bytesWritten) || bytesWritten != RowVersionLength)
+        {
+            return [new ValidationIssue(nameof(rowVersion), "rowVersion must be the base64 value returned by the API.")];
+        }
+
+        parsedRowVersion = buffer;
+        return [];
     }
 
     private static IReadOnlyList<ValidationIssue> ValidateCore(
