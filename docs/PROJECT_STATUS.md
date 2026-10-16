@@ -89,7 +89,7 @@ Last updated: 2026-10-16
 | Testcontainers SQL container removed after run | Yes |
 
 **Not executed in P2**
-- The GitHub Actions workflow itself: there is no GitHub remote yet. YAML syntax was not machine-validated (no YAML parser or `actionlint` available locally); it runs on the first push.
+- The GitHub Actions workflow itself (no GitHub remote at the time). It has since run successfully — see [Continuous integration](#continuous-integration).
 - Redis behaviour in integration tests (Redis is disabled in the test host).
 
 ### P3 – Dockerization and local deployment
@@ -167,13 +167,41 @@ Re-verification after the fixes:
 | Release build with `CI=true` + all 51 tests | Passed |
 
 **Not executed in P3**
-- The new CI `docker` job (no GitHub remote yet); the same commands were run locally.
+- The new CI `docker` job (no GitHub remote at the time; the same commands were run locally). It has since passed on GitHub — see [Continuous integration](#continuous-integration).
 - Manual browser testing of the containerized frontend (verified with HTTP requests only).
 - Deployment to Azure App Service (documented, not implemented).
 
+## Continuous integration
+
+Repository: https://github.com/davidsky1992/QueryForge (public, default branch `master`).
+
+### First GitHub Actions run (2026-10-16)
+
+[Run 38882286607](https://github.com/davidsky1992/QueryForge/actions/runs/38882286607), triggered by the push of `9d19d5a`, concluded **success**:
+
+| Job | Result | Duration | Steps |
+|---|---|---|---|
+| .NET build and tests | Success | 56 s | Restore, Release build (`CI=true`, warnings as errors), `dotnet test` (28 s), TRX upload — all steps succeeded |
+| Docker image builds | Success | 50 s | Compose validation, API, migrator, and web image builds — all steps succeeded |
+| Frontend build | Success | 14 s | `npm ci`, type-check and Vite build — all steps succeeded |
+
+**Test counts — local vs. CI**
+- **Verified locally:** 51 tests passed (15 Application unit tests, 10 API unit tests, 26 API integration tests against a SQL Server Testcontainers container), most recently in the P3 re-verification.
+- **Confirmed by the GitHub run:** only that the `Test` step succeeded and a `test-results` artifact (13 KB of TRX files) was uploaded. The job logs and artifact require a signed-in GitHub account and were not inspected, so the CI test count has **not** been independently confirmed. It should not be inferred from the step duration.
+
+The run reported two non-failing annotations, addressed below: Node.js 20 deprecation for the actions used, and the `ubuntu-latest` migration to Ubuntu 26 starting 2026-10-19.
+
+### CI maintenance (2026-10-16)
+- Actions upgraded to their current major versions, all running on Node.js 24 (verified from each official repository's `action.yml` and release notes): `actions/checkout@v7`, `actions/setup-dotnet@v6`, `actions/cache@v6`, `actions/upload-artifact@v7`, `actions/setup-node@v7`. The inputs used by the workflow are unchanged in these versions.
+- All jobs pinned to `runs-on: ubuntu-24.04` (the image used by the first successful run) so the Ubuntu 26 migration of `ubuntu-latest` cannot change the build environment unannounced. Trade-off: the runner must be bumped deliberately later, and GitHub retires older runner images on its own schedule, so the pin needs periodic review.
+- Validated locally with `actionlint` 1.7.12 (Docker image `rhysd/actionlint:1.7.12`): 0 errors. A deliberately broken copy confirmed the linter reports invalid runner labels, values, and expressions.
+- **Requires a GitHub run to confirm:** that the upgraded actions behave as before (checkout, .NET setup, NuGet cache restore/save, artifact upload, npm cache).
+
 ## Known limitations
 - No authentication or authorization.
-- GitHub Actions workflow not yet executed (no remote); actions are pinned to major versions, not commit SHAs.
+- Actions are pinned to major-version tags, not commit SHAs.
+- The CI test count is not independently confirmed (logs and artifacts require sign-in); 51 tests are verified locally.
+- The project still builds the frontend with Node.js 20 (`node-version: 20` in CI, `node:20-alpine` in the frontend Dockerfile), which reached end of life in April 2026. This is the project toolchain, separate from the Node.js 24 runtime used by the actions themselves.
 - Base images use floating tags (`mssql/server:2022-latest`, `redis:7-alpine`, `dotnet/*:8.0`, `node:20-alpine`, `nginx-unprivileged:1.27-alpine`); pin digests for reproducible release builds.
 - The API image uses the Debian-based ASP.NET runtime (with `curl` for health checks) rather than a smaller chiseled image.
 - Local Compose uses the `sa` login, an unencrypted connection, and password-less Redis; acceptable on loopback only.
@@ -186,6 +214,12 @@ Re-verification after the fixes:
 - `QueryForge.Api.http` still targets the template `/weatherforecast` endpoint.
 
 ## Next steps
-1. Push to GitHub and confirm all CI jobs pass (including the Docker image builds); consider pinning actions to commit SHAs.
+1. Push the CI maintenance commit and confirm all three jobs still pass with the upgraded actions on `ubuntu-24.04`.
 2. Azure deployment: push the API image to Azure Container Registry, provision App Service, Azure SQL, Azure Cache for Redis, and Key Vault; run the migration bundle in the pipeline.
 3. Authentication and authorization (JWT, role-based policies).
+
+CI follow-ups (small, separate changes):
+- Upgrade the project's Node.js toolchain from 20 to a supported LTS (CI, frontend Dockerfile, local setup).
+- Publish test counts to the job summary (`$GITHUB_STEP_SUMMARY`) so they are visible on the run page.
+- Evaluate Ubuntu 26 runners before moving off `ubuntu-24.04`.
+- Optionally pin actions to commit SHAs (with Dependabot updates).
