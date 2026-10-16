@@ -6,6 +6,10 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # The app loads only its own bundle and calls only same-origin URLs, so everything else is blocked.
+    # This limits what injected script could do with an API key held in page memory.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -21,17 +25,25 @@ server {
         proxy_http_version 1.1;
         # $http_host keeps the port the browser used, so absolute URLs from the API (e.g. Location) stay correct.
         proxy_set_header Host $http_host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Overwrite rather than append: a client-supplied X-Forwarded-For is never passed on, so the API sees the
+        # real client address for rate limiting.
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         client_max_body_size 1m;
     }
 
     location = /health {
         proxy_pass $api_upstream;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     location /health/ {
         proxy_pass $api_upstream;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     # Vite emits content-hashed file names, so assets can be cached indefinitely.

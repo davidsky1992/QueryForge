@@ -14,10 +14,12 @@ public abstract class ApiTestBase : IAsyncLifetime
     protected ApiTestBase(QueryForgeApiFactory factory)
     {
         Factory = factory;
-        Client = factory.CreateClient();
+        Client = factory.CreateClient(factory.AdminApiKey);
     }
 
     protected QueryForgeApiFactory Factory { get; }
+
+    /// <summary>Sends the admin API key, so functional tests exercise the API as an authorized operator.</summary>
     protected HttpClient Client { get; }
 
     public Task InitializeAsync() => Factory.ResetDatabaseAsync();

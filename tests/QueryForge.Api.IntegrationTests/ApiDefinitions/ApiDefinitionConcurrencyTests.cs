@@ -19,7 +19,7 @@ public sealed class ApiDefinitionConcurrencyTests : ApiTestBase
     public async Task SecondWriterWithSameOriginalVersion_GetsConflictAndFirstWriteIsKept()
     {
         var original = await CreateAsync(NewDefinition("shared-api"));
-        using var secondClient = Factory.CreateClient();
+        using var secondClient = Factory.CreateClient(Factory.AdminApiKey);
 
         // Both clients read version V1; the first writer wins.
         var first = await Client.PutAsJsonAsync($"{BasePath}/{original.Id}", UpdateFrom(original, name: "First writer"));

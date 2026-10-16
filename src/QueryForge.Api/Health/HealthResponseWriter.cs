@@ -10,6 +10,18 @@ public static class HealthResponseWriter
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>Overall status only, for anonymous liveness and readiness probes; no dependency names or timings.</summary>
+    public static Task WriteStatusOnlyAsync(HttpContext context, HealthReport report)
+    {
+        context.Response.ContentType = "application/json; charset=utf-8";
+        return JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            new { status = report.Status.ToString() },
+            SerializerOptions,
+            context.RequestAborted);
+    }
+
+    /// <summary>Per-dependency report for trusted callers.</summary>
     public static Task WriteAsync(HttpContext context, HealthReport report)
     {
         var response = new

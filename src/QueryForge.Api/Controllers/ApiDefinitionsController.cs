@@ -1,4 +1,8 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using QueryForge.Api.RateLimiting;
+using QueryForge.Api.Security;
 using QueryForge.Application.ApiDefinitions;
 using QueryForge.Application.Common;
 using QueryForge.Domain.ApiDefinitions;
@@ -7,6 +11,11 @@ namespace QueryForge.Api.Controllers;
 
 [ApiController]
 [Route("api/api-definitions")]
+[Authorize(Policy = AuthorizationPolicies.ReadApiDefinitions)]
+[EnableRateLimiting(RateLimitPolicies.Reads)]
+[ProducesResponseType(StatusCodes.Status401Unauthorized)]
+[ProducesResponseType(StatusCodes.Status403Forbidden)]
+[ProducesResponseType(StatusCodes.Status429TooManyRequests)]
 public sealed class ApiDefinitionsController : ControllerBase
 {
     private readonly IApiDefinitionService _apiDefinitionService;
@@ -43,6 +52,8 @@ public sealed class ApiDefinitionsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.WriteApiDefinitions)]
+    [EnableRateLimiting(RateLimitPolicies.Writes)]
     [ProducesResponseType(typeof(ApiDefinitionDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
@@ -58,6 +69,8 @@ public sealed class ApiDefinitionsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = AuthorizationPolicies.WriteApiDefinitions)]
+    [EnableRateLimiting(RateLimitPolicies.Writes)]
     [ProducesResponseType(typeof(ApiDefinitionDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -70,6 +83,8 @@ public sealed class ApiDefinitionsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = AuthorizationPolicies.WriteApiDefinitions)]
+    [EnableRateLimiting(RateLimitPolicies.Writes)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

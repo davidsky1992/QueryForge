@@ -105,6 +105,16 @@ h2 {
   color: #60707f;
 }
 
+.api-key-form {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.api-key-form input {
+  width: 16rem;
+}
+
 .counter strong {
   color: #174c4f;
   font-size: 1.5rem;

@@ -171,6 +171,66 @@ Re-verification after the fixes:
 - Manual browser testing of the containerized frontend (verified with HTTP requests only).
 - Deployment to Azure App Service (documented, not implemented).
 
+### P4 – Security hardening
+
+**Audit before changes:** no authentication or rate limiting; all five API-definition endpoints and the detailed `/health` report were anonymous; no endpoint executes user-supplied SQL (the only raw SQL is the health check's fixed `SELECT 1`); CORS was hardcoded and Development-only; nginx forwarded headers were not processed by the API; the frontend had no Content-Security-Policy.
+
+**Authentication and authorization**
+- Custom ASP.NET Core authentication scheme `ApiKey` reading `X-Api-Key`. Keys are 32 random bytes; configuration holds only their SHA-256 hashes (`Security:ApiKeys:<n>:Name/Hash/Roles`). The presented key is hashed and compared with every configured hash using `CryptographicOperations.FixedTimeEquals`, without early exit. Keys over 256 characters are rejected before hashing.
+- Roles: `reader` (GET API definitions) and `admin` (also POST/PUT/DELETE and detailed health). A fallback policy requires an authenticated key on every endpoint; public endpoints are explicitly allowlisted (`/health/live`, `/health/ready`, and Swagger in Development).
+- `401` (with `WWW-Authenticate: ApiKey header="X-Api-Key"`) for missing or invalid keys and `403` for insufficient roles, both as ProblemDetails that never echo the key. Wrong and missing keys receive identical responses.
+- Startup validation (`ValidateOnStart`) rejects malformed hashes, unknown roles, and duplicates; outside Development at least one key is required. Empty hash slots (unset Compose variables) are ignored.
+- `scripts/New-QueryForgeApiKey.ps1` generates a key and prints its hash and configuration commands. Rotation is done by overlapping old and new hashes.
+- No database migration: keys live in configuration.
+
+**Health endpoints**
+- `/health/live`: public, not rate limited, `{"status":"Healthy"}` only. Still used by the Compose health check.
+- `/health/ready` *(new)*: public, rate limited, runs all checks but returns only the overall status (`200`/`503`).
+- `/health`: detailed per-dependency report, now requires an `admin` key.
+
+**Rate limiting** (built-in ASP.NET Core middleware, fixed one-minute windows, `429` ProblemDetails with `Retry-After`): Reads 120/min and Writes 30/min per key name; unauthenticated requests to protected endpoints 30/min per client IP, counted before the `401`; health 60/min per IP. Configurable under `RateLimiting`; invalid values stop startup. Counters are in memory per instance.
+
+**Proxy, CORS, and headers**
+- Forwarded headers are applied only when `ForwardedHeaders:KnownProxies` is configured (the middleware would otherwise trust any sender). Compose gives nginx a fixed address (`172.30.89.10` on subnet `172.30.89.0/24`) and configures it as the only trusted proxy; nginx now overwrites `X-Forwarded-For` with `$remote_addr`.
+- CORS origins come from `Cors:AllowedOrigins` (Development: `localhost:5173`); wildcards are rejected and non-Development origins must be HTTPS. No CORS is configured by default.
+- API responses: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `Cache-Control: no-store`; HSTS outside Development. Swagger UI (Development) is exempt from the API CSP.
+- Frontend (nginx): strict CSP (`default-src 'self'`, no inline script or third-party origins) and `Permissions-Policy`.
+
+**Frontend**
+- API key field; the key is held in JavaScript memory only (not in the bundle, storage, cookies, or URLs) and sent as `X-Api-Key`. Clear messages for `401`, `403`, and `429` (with the retry delay).
+- Fixed a pre-existing bug: the HTTP client parsed only `application/json`, so `application/problem+json` error bodies were never read and the P1 concurrency-conflict handling could not trigger in the browser.
+
+**Swagger**: API key security definition, so Swagger UI can send `X-Api-Key` via Authorize (Development only).
+
+### P4 verification (2026-10-16)
+
+| Check | Result |
+|---|---|
+| Release build with `CI=true` | Passed, 0 warnings |
+| Application unit tests | 15 passed |
+| API unit tests (incl. 20 new: key matching, hash format, startup validation) | 30 passed |
+| Integration tests against SQL Server Testcontainers (incl. 24 new: 401/403, identical responses for wrong/missing keys, multiple and overlong keys, reader vs admin, security headers, no keys in logs, rate limits for reads/writes/anonymous/health, public vs restricted health) | 50 passed |
+| Mutation check: key store accepts any key | 9 security tests failed as expected; code restored |
+| `npm run build`; bundle contains no `localStorage`/`sessionStorage` | Passed |
+| Key script hash vs. independent SHA-256 | Identical; 43-character key, 64-character lowercase hex hash |
+| Compose: all services healthy with throwaway keys passed via shell environment (`.env` unchanged) | Passed after a one-time `docker compose down` (see below) |
+| Live: anonymous `/health/live` and `/health/ready` return status only; `/health` and `/api` return `401` | Passed (direct and through nginx) |
+| Live: reader GET `200`, POST `403`, `/health` `403`; admin detailed health, create `201`, stale update `409`, delete `204` | Passed |
+| Live: security headers on frontend and API; Swagger security scheme | Passed |
+| Live: anonymous limit `429` after 30 requests; spoofed `X-Forwarded-For` does not bypass it (direct or through nginx) | Passed |
+| Live: from the nginx container, different forwarded client IPs get separate limits (forwarded headers trusted from nginx only) | Passed |
+| API image as `Production`: refuses to start without keys or with a non-hash value (value not echoed); starts with a valid key, Swagger not served | Passed |
+
+Findings during verification:
+- Changing the Compose network to a fixed subnet left the existing `queryforge_default` network with broken DNS until it was recreated (`docker compose down`, then `up`). Fresh networks, including the same subnet and fixed IPs, worked. Documented in README troubleshooting.
+- Direct requests from the host to `:5080` arrive from a different source address than the one nginx sees, so the two paths have separate per-IP buckets. Both are limited, and neither accepts spoofed forwarded headers.
+- A change adding IPv4-mapped IPv6 proxy addresses was tested and found unnecessary (ASP.NET Core already handles mapped addresses), so it was removed.
+- In Production the process exits with code 139 when startup validation fails (non-zero, but not a conventional error code).
+
+**Not executed in P4**
+- GitHub Actions run with these changes (not pushed).
+- Manual browser testing of the API key field and CSP (verified with HTTP requests and the production build only).
+
 ## Continuous integration
 
 Repository: https://github.com/davidsky1992/QueryForge (public, default branch `master`).
@@ -195,10 +255,22 @@ The run reported two non-failing annotations, addressed below: Node.js 20 deprec
 - Actions upgraded to their current major versions, all running on Node.js 24 (verified from each official repository's `action.yml` and release notes): `actions/checkout@v7`, `actions/setup-dotnet@v6`, `actions/cache@v6`, `actions/upload-artifact@v7`, `actions/setup-node@v7`. The inputs used by the workflow are unchanged in these versions.
 - All jobs pinned to `runs-on: ubuntu-24.04` (the image used by the first successful run) so the Ubuntu 26 migration of `ubuntu-latest` cannot change the build environment unannounced. Trade-off: the runner must be bumped deliberately later, and GitHub retires older runner images on its own schedule, so the pin needs periodic review.
 - Validated locally with `actionlint` 1.7.12 (Docker image `rhysd/actionlint:1.7.12`): 0 errors. A deliberately broken copy confirmed the linter reports invalid runner labels, values, and expressions.
-- **Requires a GitHub run to confirm:** that the upgraded actions behave as before (checkout, .NET setup, NuGet cache restore/save, artifact upload, npm cache).
+- **Confirmed on GitHub:** [run 38884867143](https://github.com/davidsky1992/QueryForge/actions/runs/38884867143) for `34a2cca` concluded **success** on `ubuntu-24.04` with the upgraded actions:
+
+  | Job | Result | Duration |
+  |---|---|---|
+  | .NET build and tests | Success — all steps succeeded, `test-results` artifact uploaded (13 KB) | 65 s |
+  | Docker image builds | Success — Compose validation and API, migrator, and web image builds (images are built only; nothing is pushed or deployed) | 58 s |
+  | Frontend build | Success — `npm ci`, type-check and Vite build | 16 s |
+
+  The run reported no annotations; the earlier Node.js 20 deprecation and Ubuntu 26 migration notices no longer appear.
+- **Not confirmed:** NuGet cache reuse (the restore and save steps succeeded, but cache hits were not checked in the logs) and the CI test count (logs and artifacts require sign-in). 51 tests remain verified locally only.
 
 ## Known limitations
-- No authentication or authorization.
+- Authentication uses shared API keys: no per-user identities, single sign-on, key expiry, or runtime key management; rotation requires a configuration change and restart.
+- An API key entered in the browser can be read by any script running in that page; the strict CSP reduces but does not remove this risk.
+- Rate limits are in memory per API instance (not shared across instances), and per-IP limits depend on `ForwardedHeaders:KnownProxies` matching the real proxy in each environment.
+- Unknown routes return `401` to anonymous callers (fallback policy) instead of `404`.
 - Actions are pinned to major-version tags, not commit SHAs.
 - The CI test count is not independently confirmed (logs and artifacts require sign-in); 51 tests are verified locally.
 - The project still builds the frontend with Node.js 20 (`node-version: 20` in CI, `node:20-alpine` in the frontend Dockerfile), which reached end of life in April 2026. This is the project toolchain, separate from the Node.js 24 runtime used by the actions themselves.
@@ -208,15 +280,14 @@ The run reported two non-failing annotations, addressed below: Node.js 20 deprec
 - Integration tests need Docker and about 2 GB of RAM for the SQL Server container.
 - Redis is not covered by integration tests and is not yet used for business caching.
 - While Redis is down, cache operations wait for StackExchange.Redis timeouts (~5 s); acceptable while nothing uses the cache.
-- The health response is anonymous and lists dependency names; restrict it before any public deployment.
 - Search does not escape `%`/`_` wildcards (parameterized, so not an injection risk).
 - Frontend is a single `App.tsx` component without routing or tests.
 - `QueryForge.Api.http` still targets the template `/weatherforecast` endpoint.
 
 ## Next steps
-1. Push the CI maintenance commit and confirm all three jobs still pass with the upgraded actions on `ubuntu-24.04`.
-2. Azure deployment: push the API image to Azure Container Registry, provision App Service, Azure SQL, Azure Cache for Redis, and Key Vault; run the migration bundle in the pipeline.
-3. Authentication and authorization (JWT, role-based policies).
+1. Push P4 and confirm all three CI jobs pass with the security changes.
+2. Azure deployment: push the API image to Azure Container Registry, provision App Service, Azure SQL, Azure Cache for Redis, and Key Vault (including API key hashes); configure `ForwardedHeaders:KnownProxies` for the App Service front end; run the migration bundle in the pipeline.
+3. Identity-based authentication (Microsoft Entra ID / OIDC with JWT bearer tokens) if per-user access or SSO is needed; the role-based policies can stay.
 
 CI follow-ups (small, separate changes):
 - Upgrade the project's Node.js toolchain from 20 to a supported LTS (CI, frontend Dockerfile, local setup).

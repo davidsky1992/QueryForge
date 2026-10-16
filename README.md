@@ -46,9 +46,9 @@ Startup order is enforced with health checks: `sqlserver` (healthy) → `migrato
 
 | URL | Service |
 |---|---|
-| http://localhost:8080 | Frontend (nginx), also proxies `/api` and `/health` to the API |
-| http://localhost:5080/swagger | API Swagger UI (direct access, Development only) |
-| http://localhost:8080/health | Health report through the frontend proxy |
+| http://localhost:8080 | Frontend (nginx), also proxies `/api` and `/health*` to the API. Enter an API key in the header field to load data. |
+| http://localhost:5080/swagger | API Swagger UI (direct access, Development only); use **Authorize** to send an API key |
+| http://localhost:8080/health/ready | Public readiness status through the frontend proxy (detailed `/health` requires an admin key) |
 | `127.0.0.1,1433` | SQL Server for SSMS/Azure Data Studio (`sa` + your `.env` password) |
 | `127.0.0.1:6379` | Redis |
 
@@ -56,7 +56,9 @@ All host ports are bound to `127.0.0.1` only and can be changed in `.env` (`WEB_
 
 ### How the frontend reaches the API
 
-The browser only ever talks to `http://localhost:8080`. The frontend image is built with an empty `VITE_API_BASE_URL`, so the app calls relative URLs such as `/api/api-definitions`; nginx inside the `web` container forwards `/api/*` and `/health*` to `http://api:8080` on the Compose network. Because everything is same-origin, no CORS configuration is needed, and no hostnames or secrets are compiled into the JavaScript bundle (`VITE_*` values are public by design).
+The browser only ever talks to `http://localhost:8080`. The frontend image is built with an empty `VITE_API_BASE_URL`, so the app calls relative URLs such as `/api/api-definitions`; nginx inside the `web` container forwards `/api/*` and `/health*` to `http://api:8080` on the Compose network. Because everything is same-origin, no CORS configuration is needed, and no hostnames or secrets are compiled into the JavaScript bundle (`VITE_*` values are public by design). The API key is typed into the page at runtime and kept in memory only (see [Authentication and Authorization](#authentication-and-authorization)).
+
+nginx has a fixed address (`172.30.89.10`) on the Compose network, and the API trusts `X-Forwarded-For`/`X-Forwarded-Proto` from that address only, so per-client rate limits use the real client IP. nginx overwrites any client-supplied `X-Forwarded-For`.
 
 ### Database migrations
 
@@ -88,6 +90,9 @@ docker image rm queryforge-api:local queryforge-migrator:local queryforge-web:lo
 | Frontend shows `Request failed (502)` | The API is not healthy yet: check `docker compose ps` and `docker compose logs api`. |
 | Windows-run API or SSMS times out connecting to `localhost,1433` | Use `127.0.0.1,1433`. Ports are bound to `127.0.0.1` only, and SqlClient connections by the name `localhost` time out through Docker Desktop's loopback port forwarding. |
 | Password contains `$` or `;` | Wrap `$` values in single quotes in `.env`; do not use `;` (it breaks the connection string). |
+| Every API call returns `401` in the frontend or Swagger | No API key configured or entered. Generate one (see [Authentication and Authorization](#authentication-and-authorization)), put its hash in `.env`, run `docker compose up -d`, and enter the key. |
+| After updating to the P4 Compose file, `migrator` fails with `error: 35` / cannot reach `sqlserver` | The Compose network now has a fixed subnet. Recreate it once: `docker compose down` then `docker compose up -d` (data volumes are kept). |
+| `Pool overlaps with other one on this address space` | Another Docker network uses `172.30.89.0/24`. Change the subnet and both `172.30.89.10` addresses in `docker-compose.yml`. |
 | Checking the Compose file | Use `docker compose config --quiet`. Without `--quiet`, the rendered output contains the resolved connection strings including the password — do not paste it into issues or logs. |
 
 ### Configuration per environment
@@ -114,6 +119,15 @@ dotnet user-secrets set "ConnectionStrings:SqlServer" "Server=127.0.0.1,1433;Dat
 ```
 
 Outside Development, supply it through the `ConnectionStrings__SqlServer` environment variable or a secret store instead.
+
+Add an API key hash to user secrets (the script prints the exact commands):
+
+```powershell
+powershell -File scripts/New-QueryForgeApiKey.ps1 -Name local-admin -Role admin
+dotnet user-secrets set "Security:ApiKeys:0:Name" "local-admin" --project src/QueryForge.Api
+dotnet user-secrets set "Security:ApiKeys:0:Hash" "<hash printed by the script>" --project src/QueryForge.Api
+dotnet user-secrets set "Security:ApiKeys:0:Roles" "admin" --project src/QueryForge.Api
+```
 
 Apply database migrations:
 
@@ -149,18 +163,75 @@ Docker Compose here is a local development environment, not a deployment target.
 | Cache | Redis container, no password | Azure Cache for Redis with TLS and access keys or Entra ID |
 | Migrations | `migrator` container before the API starts | Same migration bundle as a deployment pipeline step, before swapping slots |
 | TLS / HTTPS | Plain HTTP on loopback | Terminated by App Service; HTTPS-only setting enabled |
-| Health | Compose health checks (`/health/live`) | App Service Health check pointed at `/health` |
+| Health | Compose health checks (`/health/live`) | App Service Health check pointed at `/health/ready` (anonymous, status only) |
+| API keys | Hashes from `.env` (optional; without them protected calls return 401) | Hashes as Key Vault references; startup fails if none are configured |
+| Forwarded headers | Trusted from the nginx container's fixed IP only | Configure `ForwardedHeaders:KnownProxies` for the actual front end before relying on per-IP limits |
 | Frontend | nginx container proxying `/api` | Azure Static Web Apps (linked backend) or a second App Service; either same-origin proxying or `VITE_API_BASE_URL` plus a CORS policy |
 | Scaling | Single instance | Multiple instances; schema changes stay out of app startup |
 
+## Authentication and Authorization
+
+Every endpoint requires an API key unless it is explicitly public (fail closed). Clients send the key in the `X-Api-Key` header.
+
+| Endpoint | Access |
+|---|---|
+| `GET /api/api-definitions`, `GET /api/api-definitions/{id}` | `reader` or `admin` key |
+| `POST`, `PUT`, `DELETE` on `/api/api-definitions` | `admin` key |
+| `GET /health` (detailed) | `admin` key |
+| `GET /health/live`, `GET /health/ready` | Public |
+| `/swagger` | Public, Development only |
+| Anything else (including unknown paths) | Requires a key; anonymous callers get `401` rather than `404` |
+
+Missing or invalid keys get `401` with `WWW-Authenticate: ApiKey header="X-Api-Key"`; a valid key without the required role gets `403`. Both are ProblemDetails responses that never echo the key, and a wrong key gets exactly the same response as a missing one.
+
+### Creating and configuring keys
+
+```powershell
+powershell -File scripts/New-QueryForgeApiKey.ps1 -Name local-admin -Role admin
+```
+
+The script generates 32 random bytes (a 43-character key), shows the key once, and prints its SHA-256 hash with configuration examples. **Only the hash is configured**; the key itself is given to the client and never stored by QueryForge.
+
+| Where | How |
+|---|---|
+| Docker Compose | `QUERYFORGE_ADMIN_KEY_SHA256=<hash>` and/or `QUERYFORGE_READER_KEY_SHA256=<hash>` in `.env`, then `docker compose up -d` |
+| API on the host (Option B) | User secrets `Security:ApiKeys:<n>:Name`, `:Hash`, `:Roles` |
+| Production | `Security__ApiKeys__<n>__Name/Hash/Roles` app settings, with the hash as a Key Vault reference |
+
+Startup validation rejects malformed hashes, unknown roles, and duplicate names or hashes. Outside `Development`, the API refuses to start without at least one key. In `Development`, keys are optional: the API starts and protected endpoints return `401` until a key is configured.
+
+**Rotation:** add the new key's hash in a new slot, switch clients to the new key, then remove the old hash. Both keys work during the overlap. Configuration is read at startup, so changes need a restart (App Service restarts the app when settings change).
+
+**How keys are checked:** the presented key is hashed with SHA-256 and compared with every configured hash using `CryptographicOperations.FixedTimeEquals`, without stopping at the first match. Plain SHA-256 is appropriate because keys are high-entropy random values, not passwords. Keys longer than 256 characters are rejected before hashing. Only the key's *name* is ever used in logs and rate-limit partitions.
+
+### Frontend
+
+The frontend has an API key field. The key is kept in JavaScript memory only — never in the bundle, `localStorage`, `sessionStorage`, cookies, or URLs — so it must be re-entered after a page reload. nginx sends a strict Content-Security-Policy (`default-src 'self'`, no inline scripts or third-party origins) to limit what injected script could do. A key held by a browser is still only as safe as that page; use a `reader` key where write access is not needed.
+
+## Rate Limiting
+
+ASP.NET Core rate limiting with fixed one-minute windows. Exceeding a limit returns `429` ProblemDetails with a `Retry-After` header.
+
+| Policy | Default | Partition | Applies to |
+|---|---|---|---|
+| `Reads` | 120 / min | API key name | `GET` API definitions |
+| `Writes` | 30 / min | API key name | `POST`, `PUT`, `DELETE` |
+| `Anonymous` | 30 / min | Client IP | Unauthenticated requests to protected endpoints (counted before the `401`, slowing down key guessing) |
+| `Health` | 60 / min | Client IP | `/health/ready` and `/health` |
+
+`/health/live` is not limited because container health checks call it every 10 seconds. Tune limits with `RateLimiting:<Policy>:PermitLimit` and `RateLimiting:<Policy>:WindowSeconds` (for example `RateLimiting__Writes__PermitLimit=60` as an environment variable); invalid values stop startup.
+
+Counters are kept **in memory per API instance**. With several instances each one counts separately, so the effective limit is multiplied by the instance count; a shared limit would need a distributed store (for example Redis) or a gateway such as Azure API Management. Per-IP partitions rely on `ForwardedHeaders:KnownProxies` listing the real reverse proxy; when it is empty, forwarded headers are ignored and the connection address is used.
+
 ## Health Checks
 
-| Endpoint | Purpose | Status codes |
-|---|---|---|
-| `GET /health/live` | Liveness: the process is responding; no dependencies are checked. | `200` |
-| `GET /health` | Readiness: SQL Server and Redis are checked independently (3 s timeout each). | `200` Healthy/Degraded, `503` Unhealthy |
+| Endpoint | Access | Response | Status codes |
+|---|---|---|---|
+| `GET /health/live` | Public, not rate limited | `{"status":"Healthy"}`; no dependencies are checked | `200` |
+| `GET /health/ready` | Public, rate limited | `{"status":"..."}` only; runs all checks but reveals no dependency names | `200` Healthy/Degraded, `503` Unhealthy |
+| `GET /health` | `admin` key | Status, generic description, and duration per dependency (SQL Server, Redis) | `200` Healthy/Degraded, `503` Unhealthy, `401`/`403` |
 
-SQL Server is required, so its failure makes the API `Unhealthy`. Redis only backs the optional distributed cache, so its failure reports `Degraded`. Responses contain status, a generic description, and duration per check; exception messages and connection details are never returned.
+SQL Server is required, so its failure makes the API `Unhealthy`. Redis only backs the optional distributed cache, so its failure reports `Degraded`. Each check has a 3 s timeout. Exception messages and connection details are never returned.
 
 ## Optimistic Concurrency
 
@@ -226,4 +297,7 @@ $env:CI = "true"; dotnet build QueryForge.sln -c Release; Remove-Item Env:CI
 - The `sa` login and `TrustServerCertificate=True` are acceptable for local development only.
 - Do not store third-party API credentials in API definition records.
 - Do not execute user-provided SQL or dynamically generated database commands.
-- Swagger and permissive local CORS are intended for development only.
+- Swagger is enabled in Development only. CORS origins come from `Cors:AllowedOrigins` (only `localhost:5173` in `appsettings.Development.json`); wildcards are rejected and non-Development origins must be HTTPS.
+- API responses carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'`, and `Cache-Control: no-store`; HSTS is enabled outside Development.
+- API keys are shared secrets: there are no per-user identities, expiry, or self-service rotation. Treat each key like a password and prefer narrowly scoped `reader` keys.
+- Integration tests generate random keys at runtime; no real or test credentials are committed.

@@ -11,19 +11,28 @@ public sealed class HealthEndpointTests : ApiTestBase
     {
     }
 
-    [Fact]
-    public async Task Live_ReturnsHealthyWithoutCheckingDependencies()
+    [Theory]
+    [InlineData("/health/live")]
+    [InlineData("/health/ready")]
+    public async Task PublicProbes_WithoutApiKey_ReturnOnlyOverallStatus(string path)
     {
-        var response = await Client.GetAsync("/health/live");
+        using var anonymous = Factory.CreateClient(apiKey: null);
+
+        var response = await anonymous.GetAsync(path);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var body = await response.Content.ReadAsStringAsync();
+        using var json = JsonDocument.Parse(body);
         Assert.Equal("Healthy", json.RootElement.GetProperty("status").GetString());
-        Assert.Empty(json.RootElement.GetProperty("checks").EnumerateObject());
+
+        // Nothing beyond the status: no dependency names, descriptions, or timings.
+        Assert.Single(json.RootElement.EnumerateObject());
+        Assert.DoesNotContain("sqlServer", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("redis", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Health_ReportsSqlServerContainerAsHealthy()
+    public async Task DetailedHealth_WithAdminKey_ReportsSqlServerContainerAsHealthy()
     {
         var response = await Client.GetAsync("/health");
 
@@ -37,5 +46,29 @@ public sealed class HealthEndpointTests : ApiTestBase
         // The test host disables Redis, which also proves configuration overrides reach the API.
         Assert.Contains("not configured", checks.GetProperty("redis").GetProperty("description").GetString());
         Assert.DoesNotContain("Password", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DetailedHealth_WithoutApiKey_ReturnsUnauthorized()
+    {
+        using var anonymous = Factory.CreateClient(apiKey: null);
+
+        var response = await anonymous.GetAsync("/health");
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.DoesNotContain("sqlServer", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DetailedHealth_WithReaderKey_ReturnsForbidden()
+    {
+        using var reader = Factory.CreateClient(Factory.ReaderApiKey);
+
+        var response = await reader.GetAsync("/health");
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain("sqlServer", body, StringComparison.OrdinalIgnoreCase);
     }
 }

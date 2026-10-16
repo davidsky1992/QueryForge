@@ -5,7 +5,7 @@ import {
   listApiDefinitions,
   updateApiDefinition
 } from "./api/apiDefinitions";
-import { ApiError } from "./api/httpClient";
+import { ApiError, hasApiKey, setApiKey } from "./api/httpClient";
 import {
   ApiAuthenticationType,
   ApiDefinition,
@@ -38,17 +38,36 @@ export default function App() {
   const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [keyVersion, setKeyVersion] = useState(0);
 
   const canGoBack = pageNumber > 1;
   const canGoForward = totalPages > 0 && pageNumber < totalPages;
 
   useEffect(() => {
     void load();
-  }, [pageNumber, status]);
+  }, [pageNumber, status, keyVersion]);
 
   const selectedDetails = useMemo(() => selected ?? items[0] ?? null, [items, selected]);
 
+  function applyApiKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setApiKey(apiKeyInput);
+    setApiKeyInput("");
+    setPageNumber(1);
+    setKeyVersion(version => version + 1);
+  }
+
   async function load(nextSearch = search) {
+    if (!hasApiKey()) {
+      setItems([]);
+      setTotalPages(0);
+      setTotalCount(0);
+      setSelected(null);
+      setMessage("Enter an API key to load API definitions.");
+      return;
+    }
+
     setIsLoading(true);
     setMessage(null);
 
@@ -147,6 +166,18 @@ export default function App() {
             <p className="eyebrow">QueryForge</p>
             <h1>API Definitions</h1>
           </div>
+          <form className="api-key-form" onSubmit={applyApiKey} aria-label="API key">
+            {/* Kept in memory only; re-enter after reloading the page. */}
+            <input
+              type="password"
+              placeholder={hasApiKey() ? "API key set — enter to replace" : "API key"}
+              value={apiKeyInput}
+              onChange={event => setApiKeyInput(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button type="submit" disabled={apiKeyInput.trim() === ""}>Use key</button>
+          </form>
           <div className="counter">
             <strong>{totalCount}</strong>
             <span>records</span>
@@ -320,7 +351,18 @@ export default function App() {
 
 function toMessage(error: unknown) {
   if (error instanceof ApiError) {
-    return `${error.message} (${error.status})`;
+    switch (error.status) {
+      case 401:
+        return "The API key is missing or was not accepted. Enter a valid key.";
+      case 403:
+        return "This API key does not allow that action. Changing API definitions requires an admin key.";
+      case 429:
+        return error.retryAfterSeconds
+          ? `Too many requests. Try again in ${error.retryAfterSeconds} seconds.`
+          : "Too many requests. Try again shortly.";
+      default:
+        return `${error.message} (${error.status})`;
+    }
   }
 
   return error instanceof Error ? error.message : "Unexpected error";

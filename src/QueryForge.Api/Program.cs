@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.OpenApi.Models;
 using QueryForge.Api.Health;
 using QueryForge.Api.Middleware;
+using QueryForge.Api.RateLimiting;
+using QueryForge.Api.Security;
 using QueryForge.Application;
 using QueryForge.Infrastructure;
 
@@ -9,6 +12,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+builder.Services.AddApiKeySecurity(builder.Configuration);
+builder.Services.AddApiRateLimiting(builder.Configuration);
+builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
+builder.Services.AddTrustedForwardedHeaders(builder.Configuration);
 
 // SQL Server is required to serve requests, so its failure makes the API unhealthy (HTTP 503).
 // Redis only backs the optional distributed cache, so its failure is reported as degraded (HTTP 200).
@@ -19,48 +27,83 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-builder.Services.AddCors(options =>
+builder.Services.AddSwaggerGen(options =>
 {
-    options.AddPolicy("LocalDevelopment", policy =>
+    // Lets Swagger UI (Development only) send the X-Api-Key header via "Authorize".
+    options.AddSecurityDefinition(ApiKeyAuthenticationDefaults.Scheme, new OpenApiSecurityScheme
     {
-        policy
-            .WithOrigins(
-                "http://localhost:5173",
-                "https://localhost:5173",
-                "http://127.0.0.1:5173",
-                "https://127.0.0.1:5173")
-            .AllowAnyHeader()
-            .AllowAnyMethod();
+        Type = SecuritySchemeType.ApiKey,
+        In = ParameterLocation.Header,
+        Name = ApiKeyAuthenticationDefaults.HeaderName,
+        Description = "API key issued with scripts/New-QueryForgeApiKey.ps1."
+    });
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = ApiKeyAuthenticationDefaults.Scheme }
+            },
+            Array.Empty<string>()
+        }
     });
 });
 
 var app = builder.Build();
 
+// Must run first so the client IP used for rate limiting comes from a trusted proxy only.
+app.UseTrustedForwardedHeaders();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseMiddleware<SecurityHeadersMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    app.UseCors("LocalDevelopment");
+}
+else
+{
+    app.UseHsts();
 }
 
 app.UseHttpsRedirection();
+app.UseRouting();
+app.UseConfiguredCors();
+
+// Authentication runs before rate limiting so authenticated clients are limited per API key,
+// and before authorization so unauthenticated requests are limited before they are rejected.
+app.UseAuthentication();
+app.UseRateLimiter();
+app.UseAuthorization();
+
 app.MapControllers();
 
-// Readiness: checks every dependency and reports each one independently.
-app.MapHealthChecks("/health", new HealthCheckOptions
-{
-    ResponseWriter = HealthResponseWriter.WriteAsync
-});
+// Public endpoints are allowlisted explicitly; everything else falls back to requiring an API key.
 
-// Liveness: confirms the process is responding without touching dependencies.
+// Liveness: the process responds. No dependencies are checked and nothing internal is revealed.
 app.MapHealthChecks("/health/live", new HealthCheckOptions
-{
-    Predicate = _ => false,
-    ResponseWriter = HealthResponseWriter.WriteAsync
-});
+    {
+        Predicate = _ => false,
+        ResponseWriter = HealthResponseWriter.WriteStatusOnlyAsync
+    })
+    .AllowAnonymous()
+    .DisableRateLimiting();
+
+// Readiness: runs every check but returns only the overall status (200 Healthy/Degraded, 503 Unhealthy).
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+    {
+        ResponseWriter = HealthResponseWriter.WriteStatusOnlyAsync
+    })
+    .AllowAnonymous()
+    .RequireRateLimiting(RateLimitPolicies.Health);
+
+// Detailed per-dependency report for operators with an admin key.
+app.MapHealthChecks("/health", new HealthCheckOptions
+    {
+        ResponseWriter = HealthResponseWriter.WriteAsync
+    })
+    .RequireAuthorization(AuthorizationPolicies.ViewHealthDetails)
+    .RequireRateLimiting(RateLimitPolicies.Health);
 
 app.Run();
 
