@@ -17,6 +17,8 @@ services:
       MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env (see .env.example)}"
       MSSQL_PID: "Developer"
     # Exposed on loopback for the Windows-run API, dotnet ef, and SQL tools. Containers use sqlserver:1433.
+    # Connect from Windows with "127.0.0.1,1433": with a loopback-only binding, SqlClient connections that use the
+    # host name "localhost" time out through Docker Desktop's port forwarding.
     ports:
       - "127.0.0.1:${SQLSERVER_HOST_PORT:-1433}:1433"
     volumes:

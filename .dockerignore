@@ -8,6 +8,9 @@
 **/appsettings.*.local.json
 **/*.pfx
 
+# Host-run development settings stay out of the image; containers are configured through environment variables.
+**/appsettings.Development.json
+
 # Build and test output
 **/bin/
 **/obj/

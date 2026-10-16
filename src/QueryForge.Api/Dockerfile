@@ -22,6 +22,12 @@ COPY src/QueryForge.Infrastructure/QueryForge.Infrastructure.csproj src/QueryFor
 COPY src/QueryForge.Api/QueryForge.Api.csproj src/QueryForge.Api/
 RUN dotnet restore src/QueryForge.Api/QueryForge.Api.csproj
 
+# Installed before the source is copied so this layer stays cached across code changes.
+# dotnet-ef matches the EF Core 8.0.11 packages; it is only used by the migrations-build stage.
+ARG DOTNET_EF_VERSION=8.0.11
+RUN dotnet tool install --global dotnet-ef --version ${DOTNET_EF_VERSION}
+ENV PATH="${PATH}:/root/.dotnet/tools"
+
 COPY src/ src/
 
 # ---------------------------------------------------------------------------
@@ -35,12 +41,9 @@ RUN dotnet publish src/QueryForge.Api/QueryForge.Api.csproj \
     /p:UseAppHost=false
 
 # ---------------------------------------------------------------------------
-# Build the EF Core migration bundle (dotnet-ef matches the EF Core 8.0.11 packages)
+# Build the EF Core migration bundle
 # ---------------------------------------------------------------------------
 FROM build AS migrations-build
-ARG DOTNET_EF_VERSION=8.0.11
-RUN dotnet tool install --global dotnet-ef --version ${DOTNET_EF_VERSION}
-ENV PATH="${PATH}:/root/.dotnet/tools"
 # Creating the bundle starts the API host far enough to build the DbContext, which requires a connection string.
 # This placeholder (no credentials) exists only for this RUN step; the bundle never connects at build time and
 # reads the real connection string from ConnectionStrings__SqlServer when it runs.

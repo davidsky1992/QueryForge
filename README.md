@@ -49,8 +49,8 @@ Startup order is enforced with health checks: `sqlserver` (healthy) → `migrato
 | http://localhost:8080 | Frontend (nginx), also proxies `/api` and `/health` to the API |
 | http://localhost:5080/swagger | API Swagger UI (direct access, Development only) |
 | http://localhost:8080/health | Health report through the frontend proxy |
-| `localhost,1433` | SQL Server for SSMS/Azure Data Studio (`sa` + your `.env` password) |
-| `localhost:6379` | Redis |
+| `127.0.0.1,1433` | SQL Server for SSMS/Azure Data Studio (`sa` + your `.env` password) |
+| `127.0.0.1:6379` | Redis |
 
 All host ports are bound to `127.0.0.1` only and can be changed in `.env` (`WEB_HOST_PORT`, `API_HOST_PORT`, `SQLSERVER_HOST_PORT`, `REDIS_HOST_PORT`). SQL Server and Redis ports are exposed only so Option B and local database tools work; containers talk to each other through the Compose service names `sqlserver`, `redis`, and `api`.
 
@@ -86,7 +86,18 @@ docker image rm queryforge-api:local queryforge-migrator:local queryforge-web:lo
 | `bind: address already in use` / port is already allocated | Another process uses the port (for example the host-run API or another SQL Server). Change the `*_HOST_PORT` value in `.env`. |
 | SQL Server keeps restarting or is very slow | Docker Desktop needs at least ~3 GB RAM for this stack; SQL Server is capped at 2 GB. Stop other containers. |
 | Frontend shows `Request failed (502)` | The API is not healthy yet: check `docker compose ps` and `docker compose logs api`. |
+| Windows-run API or SSMS times out connecting to `localhost,1433` | Use `127.0.0.1,1433`. Ports are bound to `127.0.0.1` only, and SqlClient connections by the name `localhost` time out through Docker Desktop's loopback port forwarding. |
 | Password contains `$` or `;` | Wrap `$` values in single quotes in `.env`; do not use `;` (it breaks the connection string). |
+| Checking the Compose file | Use `docker compose config --quiet`. Without `--quiet`, the rendered output contains the resolved connection strings including the password — do not paste it into issues or logs. |
+
+### Configuration per environment
+
+| Setting | Host-run (Option B, `Development`) | Docker Compose | Production (Azure) |
+|---|---|---|---|
+| `ConnectionStrings:SqlServer` | User secrets | `ConnectionStrings__SqlServer` from Compose (`sqlserver,1433`) | App setting / Key Vault reference |
+| `ConnectionStrings:Redis` | `appsettings.Development.json` (`127.0.0.1:6379`) | `ConnectionStrings__Redis` from Compose (`redis:6379`) | App setting; if unset, the in-memory cache is used |
+
+The base `appsettings.json` contains no hosts or credentials, and `appsettings.Development.json` is excluded from the Docker image.
 
 ## Option B: API and Frontend on Windows, Infrastructure in Docker
 
@@ -99,7 +110,7 @@ docker compose up -d sqlserver redis
 Store the API connection string as a user secret, using the same password as `.env`:
 
 ```powershell
-dotnet user-secrets set "ConnectionStrings:SqlServer" "Server=localhost,1433;Database=QueryForge;User Id=sa;Password=<your-password>;TrustServerCertificate=True;Encrypt=False" --project src/QueryForge.Api
+dotnet user-secrets set "ConnectionStrings:SqlServer" "Server=127.0.0.1,1433;Database=QueryForge;User Id=sa;Password=<your-password>;TrustServerCertificate=True;Encrypt=False" --project src/QueryForge.Api
 ```
 
 Outside Development, supply it through the `ConnectionStrings__SqlServer` environment variable or a secret store instead.

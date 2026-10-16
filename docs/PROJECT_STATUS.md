@@ -140,6 +140,32 @@ Last updated: 2026-10-16
 | `docker compose down` → `up` (volumes kept) | Previously created record still present |
 | Test data cleanup | Smoke-test records deleted through the API |
 
+### P3 review and re-verification (2026-10-16)
+
+Review of the committed P3 work against the P3 requirements found and fixed:
+
+| Issue | Fix |
+|---|---|
+| Base `appsettings.json` contained `Redis: localhost:6379`, an environment-specific URL that would also apply in Production | Removed; Development keeps it in `appsettings.Development.json`, Compose sets `ConnectionStrings__Redis`, Production falls back to the in-memory cache when unset |
+| `appsettings.Development.json` was copied into the API image | Excluded via `.dockerignore` |
+| `dotnet-ef` was installed after `COPY src/`, so every code change re-downloaded it | Installed before the source copy; verified the layer stays cached after a source change |
+| `docker compose config` prints resolved credentials; undocumented | README warns to use `--quiet`; added a per-environment configuration table |
+| **Regression from P3:** after binding SQL Server to `127.0.0.1` only, the Windows-run API (Option B) could not connect with `Server=localhost,1433` — SqlClient connections by the name `localhost` time out through Docker Desktop's loopback port forwarding (explicit `127.0.0.1` and `[::1]` work) | Option B now uses `127.0.0.1,1433` (README, troubleshooting) and `127.0.0.1:6379` for Redis; the local user secret was updated accordingly. Binding `[::1]` as well did not help and was not kept |
+
+Re-verification after the fixes:
+
+| Check | Result |
+|---|---|
+| `docker compose down`, QueryForge images removed, `docker compose build --no-cache` | Passed (120 s) |
+| Images: non-root, no `.env`/secrets/`.pfx`, password absent from history, only base `appsettings.json` in the API image, no `localhost:5111` in the bundle | Verified |
+| `docker compose up -d` from the fresh images | All services healthy; migrator exited 0 |
+| `/health` direct and through nginx; Swagger; index and SPA fallback | Passed |
+| CRUD through nginx incl. `Location` header, stale update 409, stale delete 409 | Passed |
+| `down` → `up` persistence | Record kept; test data deleted afterwards |
+| API image with `ASPNETCORE_ENVIRONMENT=Production` and no Redis setting | Healthy; Redis reports "not configured" (in-memory cache); Swagger 404 |
+| Option B: `dotnet ef database update` and the Windows-run API against Compose SQL Server/Redis | Passed after the `127.0.0.1` fix; records created on the host are visible through the containerized stack |
+| Release build with `CI=true` + all 51 tests | Passed |
+
 **Not executed in P3**
 - The new CI `docker` job (no GitHub remote yet); the same commands were run locally.
 - Manual browser testing of the containerized frontend (verified with HTTP requests only).
