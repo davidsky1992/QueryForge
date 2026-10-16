@@ -63,3 +63,6 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 });
 
 app.Run();
+
+// Exposes the top-level-statement entry point to WebApplicationFactory<Program> in integration tests.
+public partial class Program;

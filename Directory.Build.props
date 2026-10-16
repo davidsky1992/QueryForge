@@ -1,0 +1,14 @@
+<Project>
+
+  <!--
+    Shared settings for every project. Project-specific settings (target framework, nullable, packages)
+    intentionally stay in each .csproj.
+  -->
+  <PropertyGroup Condition="'$(CI)' == 'true'">
+    <!-- Keep local builds friendly but make CI fail on any compiler, analyzer, or NuGet audit warning. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Deterministic paths in CI build output. -->
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+</Project>

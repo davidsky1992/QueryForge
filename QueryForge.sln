@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QueryForge.Application.Test
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QueryForge.Api.Tests", "tests\QueryForge.Api.Tests\QueryForge.Api.Tests.csproj", "{86470BA0-D2AD-45A2-A6EF-129E745A7AFD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QueryForge.Api.IntegrationTests", "tests\QueryForge.Api.IntegrationTests\QueryForge.Api.IntegrationTests.csproj", "{32DB57C2-E578-4F6E-AA6F-FAD904C0526A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,6 +54,10 @@ Global
 		{86470BA0-D2AD-45A2-A6EF-129E745A7AFD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{86470BA0-D2AD-45A2-A6EF-129E745A7AFD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{86470BA0-D2AD-45A2-A6EF-129E745A7AFD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{32DB57C2-E578-4F6E-AA6F-FAD904C0526A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{32DB57C2-E578-4F6E-AA6F-FAD904C0526A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{32DB57C2-E578-4F6E-AA6F-FAD904C0526A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{32DB57C2-E578-4F6E-AA6F-FAD904C0526A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{03766895-EE35-421A-A53D-3B11FE351906} = {D93D6755-0216-4F9A-B35C-A20AC112CF98}
@@ -60,5 +66,6 @@ Global
 		{ED654C58-CBC4-422C-B971-468514DEB808} = {D93D6755-0216-4F9A-B35C-A20AC112CF98}
 		{7523A986-0985-40B3-8B0D-3CB9F640A228} = {07E32225-D9B0-46A4-91EC-2846A86C400E}
 		{86470BA0-D2AD-45A2-A6EF-129E745A7AFD} = {07E32225-D9B0-46A4-91EC-2846A86C400E}
+		{32DB57C2-E578-4F6E-AA6F-FAD904C0526A} = {07E32225-D9B0-46A4-91EC-2846A86C400E}
 	EndGlobalSection
 EndGlobal

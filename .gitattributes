@@ -1,0 +1,14 @@
+# Store text files with LF in the repository; Git converts to the platform's line endings on checkout.
+* text=auto
+
+# Files that must keep a specific line ending regardless of platform.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sln text eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary
+*.pfx binary

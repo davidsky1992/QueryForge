@@ -77,6 +77,48 @@ Every API definition response includes a `rowVersion`. Clients must send it back
 
 If the record changed since it was read, the API returns `409 Conflict` with `"code": "concurrency_conflict"`. A missing or malformed `rowVersion` returns `400`.
 
+## Running Tests
+
+| Project | Type | Needs Docker |
+|---|---|---|
+| `QueryForge.Application.Tests` | Unit tests for application services and validation | No |
+| `QueryForge.Api.Tests` | Unit tests for middleware and health response output | No |
+| `QueryForge.Api.IntegrationTests` | HTTP tests through the real ASP.NET Core pipeline against a disposable SQL Server container (Testcontainers) | **Yes** |
+
+Run everything (Docker Desktop must be running):
+
+```powershell
+dotnet test QueryForge.sln
+```
+
+Run only the tests that do not need Docker:
+
+```powershell
+dotnet test QueryForge.sln --filter "FullyQualifiedName!~IntegrationTests"
+```
+
+Integration test notes:
+
+- One SQL Server container is started per test run, migrated with the real EF Core migrations, and removed afterwards. Each test clears the data before it runs, so tests are independent of order.
+- The test host runs in the `Testing` environment: developer user secrets, Swagger, and local CORS are not loaded, so tests never touch your development database. Redis is disabled (in-memory cache).
+- Without Docker the integration tests fail immediately rather than being skipped, so CI cannot pass silently without them.
+- The container uses the same `mssql/server:2022-latest` image as Compose and needs about 2 GB of RAM. On an 8 GB machine, stop the Compose SQL Server (`docker compose stop sqlserver`) while running integration tests if memory is tight.
+
+## Continuous Integration
+
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on pushes and pull requests to `master`:
+
+- **.NET job:** `dotnet restore`, `dotnet build -c Release`, and `dotnet test` for all three test projects (Docker is available on `ubuntu-latest`). TRX test results are uploaded as an artifact even when tests fail.
+- **Frontend job:** `npm ci` and `npm run build` (TypeScript type-check and Vite build).
+
+Any failing step fails the workflow. The workflow has read-only repository permissions and uses no secrets. In CI (`CI=true`), [Directory.Build.props](Directory.Build.props) treats all warnings — including NuGet vulnerability warnings — as errors. To reproduce locally:
+
+```powershell
+$env:CI = "true"; dotnet build QueryForge.sln -c Release; Remove-Item Env:CI
+```
+
+[global.json](global.json) pins the .NET 8.0.4xx SDK feature band (rolling forward to newer feature bands).
+
 ## Windows 8 GB RAM Notes
 
 - Keep SQL Server and Redis in Docker, but run the API and frontend directly on Windows.
