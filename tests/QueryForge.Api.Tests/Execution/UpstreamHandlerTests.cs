@@ -330,28 +330,4 @@ public sealed class UpstreamHandlerTests
             return [];
         }
     }
-
-    /// <summary>
-    /// Resolves every name to a public address (which passes the policy) and opens the socket for that checked
-    /// endpoint to the loopback server, recording the endpoint the guarded connector asked for.
-    /// </summary>
-    private sealed class PublicUpstreamSimulator(LoopbackServer server) : IDnsResolver, ISocketConnector
-    {
-        public static readonly IPAddress PublicAddress = IPAddress.Parse("93.184.215.14");
-
-        public List<IPEndPoint> Attempts { get; } = [];
-
-        public Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken) =>
-            Task.FromResult(new[] { PublicAddress });
-
-        public Task<Stream> ConnectAsync(IPEndPoint endPoint, CancellationToken cancellationToken)
-        {
-            lock (Attempts)
-            {
-                Attempts.Add(endPoint);
-            }
-
-            return new SystemSocketConnector().ConnectAsync(server.EndPoint, cancellationToken);
-        }
-    }
 }

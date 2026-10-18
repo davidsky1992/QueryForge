@@ -43,6 +43,9 @@ internal sealed class LoopbackServer : IAsyncDisposable
         _responses.Enqueue([.. bytes, .. body]);
     }
 
+    /// <summary>Queues bytes written exactly as given, for malformed or truncated responses.</summary>
+    public void EnqueueRaw(byte[] bytes) => _responses.Enqueue(bytes);
+
     private async Task AcceptLoopAsync()
     {
         while (!_stop.IsCancellationRequested)
