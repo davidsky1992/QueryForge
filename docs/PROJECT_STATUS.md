@@ -200,7 +200,7 @@ Re-verification after the fixes:
 - API key field; the key is held in JavaScript memory only (not in the bundle, storage, cookies, or URLs) and sent as `X-Api-Key`. Clear messages for `401`, `403`, and `429` (with the retry delay).
 - Fixed a pre-existing bug: the HTTP client parsed only `application/json`, so `application/problem+json` error bodies were never read and the P1 concurrency-conflict handling could not trigger in the browser.
 
-**Swagger**: API key security definition, so Swagger UI can send `X-Api-Key` via Authorize (Development only).
+**Swagger**: API key security definition, so Swagger UI can send `X-Api-Key` via Authorize (Development only). Swagger UI itself did not render until the fix in `0ba69d6` (see [Pre-P5 security verification](#pre-p5-security-verification-2026-10-16)).
 
 ### P4 verification (2026-10-16)
 
@@ -227,9 +227,61 @@ Findings during verification:
 - A change adding IPv4-mapped IPv6 proxy addresses was tested and found unnecessary (ASP.NET Core already handles mapped addresses), so it was removed.
 - In Production the process exits with code 139 when startup validation fails (non-zero, but not a conventional error code).
 
-**Not executed in P4**
-- GitHub Actions run with these changes (not pushed).
-- Manual browser testing of the API key field and CSP (verified with HTTP requests and the production build only).
+**GitHub Actions:** P4 was committed as `7954daa` and pushed to `master`. [Run 38891263607](https://github.com/davidsky1992/QueryForge/actions/runs/38891263607) concluded **success** on `ubuntu-24.04` with no annotations:
+
+| Job | Result | Duration |
+|---|---|---|
+| .NET build and tests | Success — all 12 steps, including the Release build (`CI=true`) and `Test`; `test-results` artifact uploaded (21.8 KB) | 56 s |
+| Docker image builds | Success — all 8 steps (Compose validation; API, migrator, and web image builds; nothing is pushed or deployed) | 46 s |
+| Frontend build | Success — all 8 steps | 16 s |
+
+**Test counts:** 95 tests passed locally (15 Application, 30 API unit, 50 integration). On GitHub only the `Test` step's success is confirmed; the CI test count has not been independently confirmed (logs and artifacts require sign-in).
+
+Browser-level behavior was verified afterwards; see [Pre-P5 security verification](#pre-p5-security-verification-2026-10-16).
+
+### Pre-P5 security verification (2026-10-16)
+
+Run against the local Compose stack with real locally generated keys: an admin and a reader key created with the key-generation logic of `scripts/New-QueryForgeApiKey.ps1`, with only their SHA-256 hashes in the git-ignored `.env`. No key, hash, or password was printed or committed. Existing SQL Server and Redis volumes were kept, and no `docker compose down` was needed (the network already used the fixed subnet).
+
+| Check | Result |
+|---|---|
+| `docker compose config --quiet`; `docker compose up --build -d` | Passed; all services healthy, migrator exited 0 |
+| `.env` hash lines (checked by name and format only) | Both present, 64-character lowercase hex |
+| Anonymous: `/health/live` and `/health/ready` `200` (status only); `/health` and `/api/api-definitions` `401`; wrong key `401` | Passed (direct and through nginx) |
+| `/health`: reader `403`, admin `200` | Passed |
+| `/api/api-definitions`: reader and admin GET `200`; reader POST `403`; admin POST with an empty body `400` (validation, nothing created); reader GET through nginx `200` | Passed |
+| Rate limits: anonymous 30 × `401` then `429`; `/health/ready` 60 × `200` then `429` (`/health/live` unaffected); reader key 120 × `200` then 5 × `429`, run twice | Passed |
+| `429` response | `application/problem+json`, `Retry-After: 60` |
+| Spoofed `X-Forwarded-For` sent directly to the API, or through nginx with a different value per request | Ignored; limits still applied |
+| From the nginx container, different forwarded client IPs | Separate limits (forwarded headers trusted from nginx only) |
+| Frontend and API security headers; no inline scripts in `index.html`; no `localStorage`/`sessionStorage`/`document.cookie`/IndexedDB in the source or the served bundle | Passed |
+
+Browser checks (`http://127.0.0.1:8080` with DevTools, performed manually):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Entering the reader key loads the list | Passed (database empty: "No API definitions found.") |
+| 2 | Key gone after reload; nothing in Local/Session Storage or cookies | Passed |
+| 3 | Key sent only in the `X-Api-Key` header, never in the URL | Passed |
+| 4 | `429` message with retry delay ("Too many requests. Try again in 60 seconds.") after exhausting the reader quota | Passed |
+| 5 | `401` message for a wrong key | Passed |
+| 6 | `403` message for a reader write attempt | Passed |
+| 7 | No Content-Security-Policy violations in the console | Passed |
+| 8 | Concurrency-conflict message after a stale edit in a second tab | Passed |
+| 9 | Swagger UI: `401` without a key, `200` after Authorize with the reader key, reader POST `403`, `401` after Logout | Passed after the fix below |
+
+**Found and fixed: Swagger UI did not render** ("The provided definition does not specify a valid version field"), a defect present since the initial commit. The unused `Microsoft.AspNetCore.OpenApi` 8.0.31 package raised the transitive `Microsoft.OpenApi` to 1.6.30, which emits `"openapi": "3.0.4"`; the Swagger UI bundled with Swashbuckle 6.6.2 accepts only 3.0.0–3.0.3. Removing the package restored `Microsoft.OpenApi` 1.6.14 (`"openapi": "3.0.1"`). Release build with `CI=true` 0 warnings, 95 tests passed, no vulnerable packages, API image rebuilt. Committed as `0ba69d6` and pushed to `master`.
+
+**CI test count confirmed** from the `test-results` artifact of the GitHub Actions run for `0ba69d6` (downloaded while signed in; counters read from the TRX `ResultSummary`, not inferred from the job status):
+
+| TRX file | Total | Passed | Failed |
+|---|---|---|---|
+| `_runnervm8k3b6_2026-10-16_14_56_10.trx` (Application) | 15 | 15 | 0 |
+| `_runnervm8k3b6_2026-10-16_14_56_11.trx` (API unit) | 30 | 30 | 0 |
+| `_runnervm8k3b6_2026-10-16_14_56_40.trx` (integration) | 50 | 50 | 0 |
+| **Total** | **95** | **95** | **0** |
+
+The artifact belongs to the `0ba69d6` run: the TRX files were written at 14:56 UTC, within a minute of that commit (14:55:37 UTC); the previous commit `7954daa` was at 11:03 UTC. The run number was not recorded.
 
 ## Continuous integration
 
@@ -272,7 +324,6 @@ The run reported two non-failing annotations, addressed below: Node.js 20 deprec
 - Rate limits are in memory per API instance (not shared across instances), and per-IP limits depend on `ForwardedHeaders:KnownProxies` matching the real proxy in each environment.
 - Unknown routes return `401` to anonymous callers (fallback policy) instead of `404`.
 - Actions are pinned to major-version tags, not commit SHAs.
-- The CI test count is not independently confirmed (logs and artifacts require sign-in); 51 tests are verified locally.
 - The project still builds the frontend with Node.js 20 (`node-version: 20` in CI, `node:20-alpine` in the frontend Dockerfile), which reached end of life in April 2026. This is the project toolchain, separate from the Node.js 24 runtime used by the actions themselves.
 - Base images use floating tags (`mssql/server:2022-latest`, `redis:7-alpine`, `dotnet/*:8.0`, `node:20-alpine`, `nginx-unprivileged:1.27-alpine`); pin digests for reproducible release builds.
 - The API image uses the Debian-based ASP.NET runtime (with `curl` for health checks) rather than a smaller chiseled image.
@@ -285,9 +336,21 @@ The run reported two non-failing annotations, addressed below: Node.js 20 deprec
 - `QueryForge.Api.http` still targets the template `/weatherforecast` endpoint.
 
 ## Next steps
-1. Push P4 and confirm all three CI jobs pass with the security changes.
-2. Azure deployment: push the API image to Azure Container Registry, provision App Service, Azure SQL, Azure Cache for Redis, and Key Vault (including API key hashes); configure `ForwardedHeaders:KnownProxies` for the App Service front end; run the migration bundle in the pipeline.
-3. Identity-based authentication (Microsoft Entra ID / OIDC with JWT bearer tokens) if per-user access or SSO is needed; the role-based policies can stay.
+
+### 1. Security verification to complete before P5
+Completed on 2026-10-16: browser-level checks, Compose with real locally generated keys, and the CI test count (95/95 on the `0ba69d6` run). See [Pre-P5 security verification](#pre-p5-security-verification-2026-10-16). P5 Step 1 may start once approved.
+
+### 2. Proposed P5 — Dynamic API Execution
+Executing requests against registered API definitions turns the API into an outbound HTTP client, so the design must address these risks before implementation starts:
+- **SSRF:** resolve and validate target hosts on every request; block loopback, link-local (including cloud metadata `169.254.169.254`), private, and Compose-internal addresses; restrict schemes and ports; do not follow redirects to unvalidated hosts.
+- **Credentials for target APIs:** never store them in API definition records (existing rule); decide on a secret store before any authenticated execution.
+- **Resource limits:** request timeouts, response size limits, and a separate, stricter rate-limit policy for execution.
+- **Authorization and auditing:** admin-only (or a new dedicated role), with an audit log of who executed what — without logging request or response secrets.
+- **No arbitrary SQL:** execution covers HTTP calls to registered APIs only; user-supplied SQL remains out of scope.
+
+### 3. Later
+- Azure deployment: push the API image to Azure Container Registry, provision App Service, Azure SQL, Azure Cache for Redis, and Key Vault (including API key hashes); configure `ForwardedHeaders:KnownProxies` for the App Service front end; run the migration bundle in the pipeline.
+- Identity-based authentication (Microsoft Entra ID / OIDC with JWT bearer tokens) if per-user access or SSO is needed; the role-based policies can stay.
 
 CI follow-ups (small, separate changes):
 - Upgrade the project's Node.js toolchain from 20 to a supported LTS (CI, frontend Dockerfile, local setup).
