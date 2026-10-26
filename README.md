@@ -177,10 +177,15 @@ Every endpoint requires an API key unless it is explicitly public (fail closed).
 |---|---|
 | `GET /api/api-definitions`, `GET /api/api-definitions/{id}` | `reader` or `admin` key |
 | `POST`, `PUT`, `DELETE` on `/api/api-definitions` | `admin` key |
+| `GET /api/api-definitions/{id}/operations[/{operationId}]` | `reader` or `admin` key |
+| `POST`, `PUT`, `DELETE` on `/api/api-definitions/{id}/operations` | `admin` key |
+| `POST /api/execute/{definitionSlug}/{operationKey}` | `executor` or `admin` key; **only exists when `Execution:Enabled` is true** (off by default) |
 | `GET /health` (detailed) | `admin` key |
 | `GET /health/live`, `GET /health/ready` | Public |
 | `/swagger` | Public, Development only |
 | Anything else (including unknown paths) | Requires a key; anonymous callers get `401` rather than `404` |
+
+Roles: `reader` reads definitions and operations; `admin` also changes them, executes operations and sees detailed health; `executor` can only execute operations and gets `403` on every management endpoint.
 
 Missing or invalid keys get `401` with `WWW-Authenticate: ApiKey header="X-Api-Key"`; a valid key without the required role gets `403`. Both are ProblemDetails responses that never echo the key, and a wrong key gets exactly the same response as a missing one.
 
@@ -194,7 +199,7 @@ The script generates 32 random bytes (a 43-character key), shows the key once, a
 
 | Where | How |
 |---|---|
-| Docker Compose | `QUERYFORGE_ADMIN_KEY_SHA256=<hash>` and/or `QUERYFORGE_READER_KEY_SHA256=<hash>` in `.env`, then `docker compose up -d` |
+| Docker Compose | `QUERYFORGE_ADMIN_KEY_SHA256`, `QUERYFORGE_READER_KEY_SHA256` and/or `QUERYFORGE_EXECUTOR_KEY_SHA256` in `.env` (each optional), then `docker compose up -d` |
 | API on the host (Option B) | User secrets `Security:ApiKeys:<n>:Name`, `:Hash`, `:Roles` |
 | Production | `Security__ApiKeys__<n>__Name/Hash/Roles` app settings, with the hash as a Key Vault reference |
 
@@ -218,6 +223,7 @@ ASP.NET Core rate limiting with fixed one-minute windows. Exceeding a limit retu
 | `Writes` | 30 / min | API key name | `POST`, `PUT`, `DELETE` |
 | `Anonymous` | 30 / min | Client IP | Unauthenticated requests to protected endpoints (counted before the `401`, slowing down key guessing) |
 | `Health` | 60 / min | Client IP | `/health/ready` and `/health` |
+| `Execute` | 60 / min | API key name | `POST /api/execute/...` (each request makes an outbound call) |
 
 `/health/live` is not limited because container health checks call it every 10 seconds. Tune limits with `RateLimiting:<Policy>:PermitLimit` and `RateLimiting:<Policy>:WindowSeconds` (for example `RateLimiting__Writes__PermitLimit=60` as an environment variable); invalid values stop startup.
 
@@ -240,14 +246,137 @@ Every API definition response includes a `rowVersion`. Clients must send it back
 - `PUT /api/api-definitions/{id}` with `rowVersion` in the JSON body.
 - `DELETE /api/api-definitions/{id}?rowVersion={rowVersion}` (URL-encoded).
 
-If the record changed since it was read, the API returns `409 Conflict` with `"code": "concurrency_conflict"`. A missing or malformed `rowVersion` returns `400`.
+If the record changed since it was read, the API returns `409 Conflict` with `"code": "concurrency_conflict"`. A missing or malformed `rowVersion` returns `400`. Operations (below) work the same way.
+
+## Dynamic API Execution
+
+QueryForge can call a registered upstream HTTP API on a caller's behalf. Administrators register **operations**; callers supply **parameter values only**. The URL, method, headers and upstream authentication always come from the registration, never from the caller.
+
+> **Status:** milestone 1 is implemented and tested, but the endpoint is **disabled** (`Execution:Enabled=false`). Enabling it is a separate, explicit decision.
+
+### Registering an operation (admin)
+
+An operation belongs to an API definition. The definition supplies the host (`baseUrl`) and its `authenticationType`; the operation adds a relative path template and the parameters a caller may send.
+
+```http
+POST /api/api-definitions/{definitionId}/operations
+X-Api-Key: <admin key>
+
+{
+  "key": "current-weather",
+  "method": 0,                               // GET (the only method in milestone 1)
+  "pathTemplate": "/v1/forecast/{city}",
+  "parameters": [
+    { "name": "city", "location": 0, "type": 0, "required": true,  "maxLength": 64 },
+    { "name": "days", "location": 1, "type": 1, "required": false, "minimum": 1, "maximum": 7, "default": "3" }
+  ],
+  "timeoutSeconds": 10,                      // 1–30, default 10
+  "maxResponseBytes": 262144,                // up to 1 MiB, default 256 KiB
+  "enabled": true
+}
+```
+
+Enums are numbers: `location` 0 = path, 1 = query; `type` 0 = string, 1 = integer, 2 = number, 3 = boolean.
+
+Registration rules:
+
+- `pathTemplate` starts with `/` and contains only unreserved literal segments (`A-Z a-z 0-9 - . _ ~`) and whole-segment `{placeholders}`. No scheme, host, `?`, `#`, `%`, `\`, `//`, `.` or `..`.
+- Every placeholder has exactly one matching `path` parameter (case-sensitive), and every `path` parameter is required.
+- Up to 20 parameters. `maxLength` (≤ 1024) applies to strings, `minimum`/`maximum` to numbers. `allowedValues` and `default` must satisfy the declared rules.
+- `pattern` must match the whole value. It is anchored automatically and evaluated with .NET's linear-time `NonBacktracking` engine and a 100 ms timeout. Backreferences and lookarounds are rejected.
+- Updates and deletes need `rowVersion`; changes are audited.
+
+### Executing (executor or admin)
+
+```http
+POST /api/execute/weather/current-weather
+X-Api-Key: <executor key>
+Content-Type: application/json
+
+{ "parameters": { "city": "Hanoi", "days": 2 } }
+```
+
+If the upstream answered, with any status, the response is `200` with a fixed envelope. Upstream headers are never passed through.
+
+```json
+{ "upstreamStatus": 200, "contentType": "application/json", "body": { "temp": 31 }, "durationMs": 143 }
+```
+
+`body` is the parsed JSON, a JSON string for `text/*`, or `null` for an empty body. A redirect is reported as its status (for example `302`) and is never followed.
+
+| Status | `code` | Meaning |
+|---|---|---|
+| `400` | `validation_error` | Unknown, missing or invalid parameters (including `""`, `.` or `..` as a path value); malformed JSON |
+| `401` / `403` | — | Missing or invalid key / key without `executor` or `admin` |
+| `404` | `not_found` | Unknown definition slug or operation key |
+| `409` | `operation_disabled` | Operation disabled, or definition not `Active` |
+| `409` | `upstream_auth_not_supported` | Definition's `authenticationType` is not `None` (milestone 1) |
+| `413` | `request_too_large` | Request body over 16 KB |
+| `415` | — | Request body is not `application/json` |
+| `429` | — | `Execute` rate limit |
+| `502` | `upstream_destination_blocked` | Target not allowed: blocked address, port or scheme, or a base URL with userinfo, query or fragment |
+| `502` | `upstream_unreachable` | DNS failure, connection refused, TLS failure |
+| `502` | `upstream_response_too_large` / `upstream_unsupported_content_type` / `upstream_invalid_response` | Over `maxResponseBytes`; not UTF-8 JSON or text; malformed, compressed or truncated response |
+| `503` | `execution_capacity_exceeded` | Too many executions in flight (with `Retry-After`) |
+| `504` | `upstream_timeout` | No complete response within `timeoutSeconds` |
+| `499` | — | The caller disconnected; the upstream call is cancelled |
+
+### Configuration
+
+| Setting | Default | Notes |
+|---|---|---|
+| `Execution:Enabled` | `false` | When false, the execute route does not exist |
+| `Execution:AllowHttp` | `false` | Plain-HTTP upstreams; **startup fails if enabled in Production** |
+| `Execution:AllowedPorts` | `80`, `443` | A configured list replaces the defaults |
+| `Execution:MaxConcurrentExecutions` | `20` | Per API instance; requests over the cap get `503` immediately (no queue) |
+| `RateLimiting:Execute` | 60 / min per key | See [Rate Limiting](#rate-limiting) |
+
+### SSRF protection
+
+The caller never supplies a URL. The upstream URL is the definition's `baseUrl` plus the registered template, with each value percent-encoded into a single path segment or query pair. The destination is then checked **when the connection is made**, not by inspecting strings:
+
+1. **Resolve once, connect to what was checked.** A `SocketsHttpHandler.ConnectCallback` resolves the host once, rejects the connection if **any** resolved address is blocked, and opens the socket to one of the checked addresses. A DNS answer cannot change between the check and the connect (DNS rebinding), and a mixed public/private answer is rejected outright. TLS still validates the certificate against the host name.
+2. **Blocked IPv4:** `0/8`, `10/8`, `100.64/10`, `127/8`, `169.254/16` (cloud metadata), `172.16/12` (includes the Compose network), `192.0.0/24`, `192.0.2/24`, `192.88.99/24`, `192.168/16`, `198.18/15`, `198.51.100/24`, `203.0.113/24`, `224/4`, `240/4`.
+3. **IPv6:** only global unicast `2000::/3` is allowed, minus `2001::/23` (including Teredo), `2001:db8::/32`, `2002::/16` (6to4) and `3fff::/20`. So `::1`, `fc00::/7` (including AWS's `fd00:ec2::254`), `fe80::/10`, multicast, NAT64 and IPv4-compatible forms are blocked. IPv4-mapped addresses (`::ffff:a.b.c.d`) are checked as IPv4.
+4. **Ports and scheme:** only the allowed ports (checked before any DNS lookup) and HTTPS, unless `AllowHttp`.
+5. **Nothing else can redirect the connection:** proxies are disabled, redirects are not followed, requests are pinned to HTTP/1.1 (HTTP/3 uses QUIC and would bypass `ConnectCallback`), and IP literals in any form (`127.1`, `2130706433`, `0x7f000001`, `[::ffff:127.0.0.1]`) are parsed and checked like resolved addresses.
+6. **No ambient credentials or state:** upstream requests carry only `User-Agent: QueryForge/1.0` and `Accept`. No caller header (including `X-Api-Key`, `Authorization`, `Cookie`, `X-Forwarded-*`) is copied, and cookies, Windows credentials and automatic decompression are disabled.
+7. **Bounded resources:** request bodies up to 16 KB, at most 20 parameters of at most 1 KB each, response headers up to 32 KB, response bodies read only up to `maxResponseBytes` (declared oversized bodies are rejected unread), a per-operation timeout covering headers and body, a connect timeout, a concurrency cap and a per-key rate limit. A client disconnect cancels the upstream call.
+
+How each part is verified (all tests run without internet access):
+
+| Requirement | Evidence |
+|---|---|
+| Address rules, range boundaries, IPv6 and IPv4-mapped forms | 105 table-driven tests in `DestinationPolicyTests` |
+| DNS rebinding and mixed answers | `GuardedConnectorTests`: a fake resolver answers public then loopback; the socket goes only to the checked public address, and a mixed answer opens no connection |
+| Blocking with real DNS and sockets | `UpstreamHandlerTests` and `ExecutionEndpointTests`: `127.0.0.1`, `127.1`, `2130706433`, `0x7f.0.0.1`, `[::ffff:127.0.0.1]`, `[::1]` and `localhost` produce **zero TCP connections** to a listening loopback server, with that server's port and plain HTTP deliberately allowed so only the address rules can block |
+| Redirects, cookies, decompression, HTTP/3, headers | Real-socket tests against loopback servers |
+| End-to-end pipeline | `ExecutionEndpointTests` resolve the shipped DI graph (real resolver, guarded handler, no HTTP loggers) and run the whole request through it |
+| Tests can detect regressions | Each guard was removed or weakened on purpose (mutation testing) and the named tests failed; see `docs/PROJECT_STATUS.md` |
+
+### Audit trail
+
+Configuration changes (`operation.created`, `.updated`, `.deleted`, including concurrency rejections) and every execution attempt on an existing operation (`operation.executed`) are written to the `AuditEvents` table. Each row holds the time, the API key **name**, the action, the operation id, the outcome (`Succeeded`, `Failed` or `Rejected`), upstream status, duration, error code and trace id. **No parameter values, bodies, headers, keys or credentials are stored.** Audit rows are written through their own `DbContext`, and are written even if the caller disconnects. If an audit write fails, the failure is logged with identifiers and the request still reports the real outcome. There is no retention policy or read endpoint yet.
+
+Parameter values are also kept out of logs: `IHttpClientFactory`'s default loggers, which log full URLs, are removed for the upstream client, and the execute action reads its body itself because MVC logs bound action arguments at Trace level.
+
+### Limitations
+
+- **Upstream authentication:** only `None` in milestone 1. API-key upstreams (via configuration secret references, never stored in the database) are planned for milestone 2.
+- **Limits are per instance:** rate limits and the concurrency cap are kept per API instance and are not shared.
+- **Internal services on public addresses** (hairpin NAT, your own public endpoint, a public host that proxies onward) are not detected. Administrators are trusted to register only intended public hosts; network-level egress rules remain the recommended second layer, and Compose does not configure any.
+- **Static deny-list:** new special-purpose ranges need a code change. NAT64 (`64:ff9b::/96`) is blocked, so an IPv6-only deployment relying on DNS64 cannot reach IPv4-only upstreams.
+- **DNS rebinding** is proven with a fake resolver, not a live rebinding DNS server. On Linux a slow `getaddrinfo` call is abandoned at the timeout rather than aborted.
+- **Defence-in-depth check not tested on its own:** the final check that the built URL is still under `baseUrl` cannot be reached while values are percent-encoded, so no test can trigger it (its mutation survives).
+- **TLS:** tests use plain HTTP on loopback; certificate validation uses the .NET defaults and is only verified as not overridden.
+- **Scope:** GET only, path and query parameters only, no request bodies, no retries, no UI.
 
 ## Running Tests
 
 | Project | Type | Needs Docker |
 |---|---|---|
-| `QueryForge.Application.Tests` | Unit tests for application services and validation | No |
-| `QueryForge.Api.Tests` | Unit tests for middleware and health response output | No |
+| `QueryForge.Application.Tests` | Unit tests for application services, validation, parameter binding and URL building | No |
+| `QueryForge.Api.Tests` | Unit tests for middleware, security and health output, plus execution networking tests with real sockets on loopback | No (needs loopback networking only) |
 | `QueryForge.Api.IntegrationTests` | HTTP tests through the real ASP.NET Core pipeline against a disposable SQL Server container (Testcontainers) | **Yes** |
 
 Run everything (Docker Desktop must be running):
@@ -296,6 +425,7 @@ $env:CI = "true"; dotnet build QueryForge.sln -c Release; Remove-Item Env:CI
 - Never commit `.env` or real connection strings; `.env.example` contains placeholders only.
 - The `sa` login and `TrustServerCertificate=True` are acceptable for local development only.
 - Do not store third-party API credentials in API definition records.
+- Operation execution is disabled by default. Before enabling it, read [Dynamic API Execution](#dynamic-api-execution), especially its limitations.
 - Do not execute user-provided SQL or dynamically generated database commands.
 - Swagger is enabled in Development only. CORS origins come from `Cors:AllowedOrigins` (only `localhost:5173` in `appsettings.Development.json`); wildcards are rejected and non-Development origins must be HTTPS.
 - API responses carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'`, and `Cache-Control: no-store`; HSTS is enabled outside Development.

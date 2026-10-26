@@ -1,6 +1,6 @@
 # QueryForge Project Status
 
-Last updated: 2026-10-16
+Last updated: 2026-10-26
 
 ## Completed
 
@@ -283,6 +283,55 @@ Browser checks (`http://127.0.0.1:8080` with DevTools, performed manually):
 
 The artifact belongs to the `0ba69d6` run: the TRX files were written at 14:56 UTC, within a minute of that commit (14:55:37 UTC); the previous commit `7954daa` was at 11:03 UTC. The run number was not recorded.
 
+### P5 – Dynamic API Execution, milestone 1 (2026-10-26)
+
+Administrators register GET operations under an API definition; executor and admin keys run them through `POST /api/execute/{definitionSlug}/{operationKey}` and receive a fixed envelope. **The endpoint is disabled** (`Execution:Enabled=false` in the shipped configuration); enabling it is a separate decision. Contract, configuration, SSRF design and limitations are documented in the README section [Dynamic API Execution](../README.md#dynamic-api-execution).
+
+Decisions approved before implementation: fixed response envelope (no passthrough); upstream secrets in milestone 2 via configuration references, never in the database; no private-network allowlist; a distinct `executor` role with no access to management endpoints; milestone 1 executes only definitions with `AuthenticationType = None`.
+
+Implemented in nine approved steps, each built with `CI=true` (0 warnings), fully tested and mutation-checked before commit:
+
+| Step | Commit | Content | Tests after the step |
+|---|---|---|---|
+| 1 | `1159d9a` | `DestinationPolicy`: IPv4 deny-list, IPv6 `2000::/3` allow-list minus special ranges, IPv4-mapped checked as IPv4, port allow-list | 200 |
+| 2 | `d2874a4` | `GuardedConnector`: resolve once, reject if any address is blocked, connect only to checked addresses; ports checked before DNS | 243 |
+| 3 | `5ceca1e` | Hardened `SocketsHttpHandler` (ConnectCallback, no proxy, redirects, cookies, credentials or decompression) and HTTP/1.1 pinning; real-socket loopback tests | 270 |
+| 4 | `b826b28` | Bounded response reading (UTF-8 JSON/text only, no content encoding), per-call timeout, error codes and 502/503/504 mapping | 327 |
+| 5 | `f26da63` | `ApiOperation` and `AuditEvent` storage; template and parameter validation (linear-time anchored patterns); additive migration `AddApiOperationsAndAuditEvents` verified up, down and up | 454 |
+| 6 | `7ee1bcb` | Operation management endpoints (reader reads, admin writes, rowVersion); `executor` role with no management access; audit of changes and concurrency rejections | 485 |
+| 7 | `d32034d` | `ExecutionService`: status and auth checks, declared-parameters-only binding, percent-encoded URL building under the base URL, execution audit without values | 566 |
+| 8 | `2c5ed46` | Endpoint behind `Execution:Enabled`, executor policy, `Execute` rate limit, concurrency cap (503), 16 KB body read without model binding, `RemoveAllLoggers` for the upstream client, startup validation (no `AllowHttp` in Production), Compose executor key slot | 593 |
+| 9 | — | Security gate: milestone mutation re-run, README and status documentation (this section) | 593 |
+
+Current local result: **593 tests passed** (230 Application, 270 API unit, 93 integration). The CI test count for the P5 commits has not been confirmed from a `test-results` artifact yet.
+
+**Mutation re-run on the final code (Step 9).** Each guard was removed or weakened on purpose, only the relevant tests were run, and the file was restored byte-for-byte afterwards:
+
+| Mutation | Result |
+|---|---|
+| Allow `169.254/16` (metadata) | Caught (4 tests) |
+| Allow IPv6 outside `2000::/3` | Caught (17) |
+| Resolve DNS again at connect time (rebinding) | Caught (5) |
+| Filter mixed DNS answers instead of rejecting | Caught (5) |
+| Remove `ConnectCallback` (unchecked sockets) | Caught (25) |
+| Follow redirects | Caught (4) |
+| Do not pin HTTP/1.1 (HTTP/3 bypass) | Caught (3) |
+| Read upstream response without a size limit | Caught (1) |
+| Read the request body without a size limit | Caught (2) |
+| Ignore unknown parameters | Caught (3) |
+| Do not percent-encode path values | Caught (7) |
+| Allow `.`/`..` segments in templates | Caught (4) |
+| Operation update does not bump `RowVersion` | Caught (1, integration) |
+| Give `executor` read access to management endpoints | Caught (1, integration) |
+| Keep `IHttpClientFactory` loggers (URLs logged) | Caught (2, integration) |
+| Expose the execute endpoint while disabled | Caught (1, integration) |
+| Build the upstream client without `GuardedConnector` | Caught (16, integration) |
+
+Findings during P5 that strengthened tests or code:
+- **Weak tests found by mutations and fixed:** a content-encoding test that also failed for invalid JSON; a slow-body timeout test that would hang instead of failing; a connector test that did not cover non-socket exceptions; a disabled-endpoint test that could not tell the routing 404 from the service's 404; a body-limit test that never reached the counting loop (moved into the unit-tested `BoundedBodyReader`).
+- **Defects found by tests and fixed:** decimal parameter bounds were reported as `1` when created but `1.0000000000` when read back (database scale); MVC Trace logging of bound action arguments would have logged caller parameters, so the execute action reads its body itself.
+- **Mutation that survives by design:** removing the final "URL is still under the base URL" check. Percent-encoding makes the check unreachable, so it stays as defence in depth and is documented as untested on its own.
+
 ## Continuous integration
 
 Repository: https://github.com/davidsky1992/QueryForge (public, default branch `master`).
@@ -334,19 +383,21 @@ The run reported two non-failing annotations, addressed below: Node.js 20 deprec
 - Search does not escape `%`/`_` wildcards (parameterized, so not an injection risk).
 - Frontend is a single `App.tsx` component without routing or tests.
 - `QueryForge.Api.http` still targets the template `/weatherforecast` endpoint.
+- Operation execution (P5 milestone 1): disabled by default; upstream authentication `None` only; limits per instance; internal services reachable through public addresses are not detected and no network egress rules are configured; static deny-list (NAT64 blocked); DNS rebinding proven with a fake resolver; the final base-URL containment check has no test of its own; TLS not tested separately; GET, path and query parameters only. Details in the README [limitations](../README.md#limitations).
+- `AuditEvents` has no retention policy and no read endpoint.
 
 ## Next steps
 
-### 1. Security verification to complete before P5
-Completed on 2026-10-16: browser-level checks, Compose with real locally generated keys, and the CI test count (95/95 on the `0ba69d6` run). See [Pre-P5 security verification](#pre-p5-security-verification-2026-10-16). P5 Step 1 may start once approved.
+### 1. Before enabling execution (separate approval)
+P5 milestone 1 is complete with `Execution:Enabled=false`. Turning it on should follow:
+- Confirming the CI test count (593 expected) for the latest commit from the `test-results` artifact, including the real-socket tests on Ubuntu.
+- An explicit decision on where it is enabled (local Compose only, or a deployed environment) and, for any deployment, network egress rules as a second layer.
+- Generating an executor key (`scripts/New-QueryForgeApiKey.ps1 -Role executor`) and a manual end-to-end check against a real public test API.
 
-### 2. Proposed P5 — Dynamic API Execution
-Executing requests against registered API definitions turns the API into an outbound HTTP client, so the design must address these risks before implementation starts:
-- **SSRF:** resolve and validate target hosts on every request; block loopback, link-local (including cloud metadata `169.254.169.254`), private, and Compose-internal addresses; restrict schemes and ports; do not follow redirects to unvalidated hosts.
-- **Credentials for target APIs:** never store them in API definition records (existing rule); decide on a secret store before any authenticated execution.
-- **Resource limits:** request timeouts, response size limits, and a separate, stricter rate-limit policy for execution.
-- **Authorization and auditing:** admin-only (or a new dedicated role), with an audit log of who executed what — without logging request or response secrets.
-- **No arbitrary SQL:** execution covers HTTP calls to registered APIs only; user-supplied SQL remains out of scope.
+### 2. P5 milestone 2 (proposed)
+- Upstream API-key authentication through configuration secret references (never stored in the database), with redaction tests.
+- Admin UI for operations and a "try it" panel for executor keys.
+- An admin-only audit read endpoint and a retention policy.
 
 ### 3. Later
 - Azure deployment: push the API image to Azure Container Registry, provision App Service, Azure SQL, Azure Cache for Redis, and Key Vault (including API key hashes); configure `ForwardedHeaders:KnownProxies` for the App Service front end; run the migration bundle in the pipeline.
