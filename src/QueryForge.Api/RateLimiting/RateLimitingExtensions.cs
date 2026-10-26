@@ -10,6 +10,7 @@ public static class RateLimitPolicies
     public const string Reads = "api-reads";
     public const string Writes = "api-writes";
     public const string Health = "health";
+    public const string Execute = "api-execute";
 }
 
 public static class RateLimitingExtensions
@@ -46,7 +47,8 @@ public static class RateLimitingExtensions
 
             limiter.AddPolicy(RateLimitPolicies.Reads, context => PerClient(context, RateLimitPolicies.Reads, options.Reads, options.Anonymous));
             limiter.AddPolicy(RateLimitPolicies.Writes, context => PerClient(context, RateLimitPolicies.Writes, options.Writes, options.Anonymous));
-            limiter.AddPolicy(RateLimitPolicies.Health, context => FixedWindow($"{RateLimitPolicies.Health}:ip:{ClientIp(context)}", options.Health));
+            limiter.AddPolicy(RateLimitPolicies.Execute, context => PerClient(context, RateLimitPolicies.Execute, options.Execute, options.Anonymous));
+            limiter.AddPolicy(RateLimitPolicies.Health,context => FixedWindow($"{RateLimitPolicies.Health}:ip:{ClientIp(context)}", options.Health));
         });
 
         return services;

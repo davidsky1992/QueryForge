@@ -28,4 +28,10 @@
     <ProjectReference Include="..\..\src\QueryForge.Api\QueryForge.Api.csproj" />
   </ItemGroup>
 
+  <!-- Shared real-socket test helpers (loopback server, simulated public upstream), linked rather than copied. -->
+  <ItemGroup>
+    <Compile Include="..\QueryForge.Api.Tests\Execution\LoopbackServer.cs" Link="Execution\Shared\LoopbackServer.cs" />
+    <Compile Include="..\QueryForge.Api.Tests\Execution\PublicUpstreamSimulator.cs" Link="Execution\Shared\PublicUpstreamSimulator.cs" />
+  </ItemGroup>
+
 </Project>

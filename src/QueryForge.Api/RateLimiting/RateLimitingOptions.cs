@@ -20,12 +20,16 @@ public sealed class RateLimitingOptions
     /// <summary>Readiness and detailed health requests, per client IP.</summary>
     public RateLimitWindow Health { get; set; } = new() { PermitLimit = 60 };
 
+    /// <summary>Operation executions, per API key. Each one makes an outbound call, so it is kept stricter.</summary>
+    public RateLimitWindow Execute { get; set; } = new() { PermitLimit = 60 };
+
     public IEnumerable<(string Name, RateLimitWindow Window)> All()
     {
         yield return (nameof(Reads), Reads);
         yield return (nameof(Writes), Writes);
         yield return (nameof(Anonymous), Anonymous);
         yield return (nameof(Health), Health);
+        yield return (nameof(Execute), Execute);
     }
 }
 

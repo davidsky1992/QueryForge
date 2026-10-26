@@ -36,6 +36,9 @@ internal sealed class LoopbackServer : IAsyncDisposable
 
     public ConcurrentQueue<string> Requests { get; } = new();
 
+    /// <summary>When no response is queued, keep the connection open without answering (for timeout tests).</summary>
+    public bool HoldWhenNoResponse { get; set; }
+
     public void EnqueueResponse(string head, byte[]? body = null)
     {
         body ??= [];
@@ -77,6 +80,10 @@ internal sealed class LoopbackServer : IAsyncDisposable
                 if (_responses.TryDequeue(out var response))
                 {
                     await stream.WriteAsync(response, _stop.Token);
+                }
+                else if (HoldWhenNoResponse)
+                {
+                    await Task.Delay(Timeout.Infinite, _stop.Token);
                 }
             }
             catch (Exception) when (_stop.IsCancellationRequested)

@@ -83,6 +83,9 @@ services:
       Security__ApiKeys__1__Name: "local-reader"
       Security__ApiKeys__1__Hash: "${QUERYFORGE_READER_KEY_SHA256:-}"
       Security__ApiKeys__1__Roles: "reader"
+      Security__ApiKeys__2__Name: "local-executor"
+      Security__ApiKeys__2__Hash: "${QUERYFORGE_EXECUTOR_KEY_SHA256:-}"
+      Security__ApiKeys__2__Roles: "executor"
       # Only the frontend's nginx (fixed address below) may set X-Forwarded-For/Proto. Requests reaching the API any
       # other way, including the host port, cannot spoof the client IP used for rate limiting.
       ForwardedHeaders__KnownProxies__0: "172.30.89.10"

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
+using QueryForge.Api.Execution;
 using QueryForge.Api.Health;
 using QueryForge.Api.Http;
 using QueryForge.Api.Middleware;
@@ -18,6 +19,9 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddApiKeySecurity(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IRequestContext, HttpRequestContext>();
+
+// Operation execution (outbound HTTP). The endpoint exists only when Execution:Enabled is true.
+builder.Services.AddOperationExecution(builder.Configuration, builder.Environment);
 builder.Services.AddApiRateLimiting(builder.Configuration);
 builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
 builder.Services.AddTrustedForwardedHeaders(builder.Configuration);

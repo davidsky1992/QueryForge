@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -72,6 +73,23 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
         });
     }
 
+    /// <summary>A separate API host with settings and test-only service replacements (for example a simulated upstream).</summary>
+    public WebApplicationFactory<Program> WithHost(IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? configureServices = null)
+    {
+        return WithWebHostBuilder(builder =>
+        {
+            foreach (var (key, value) in settings)
+            {
+                builder.UseSetting(key, value);
+            }
+
+            if (configureServices is not null)
+            {
+                builder.ConfigureTestServices(configureServices);
+            }
+        });
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // "Testing" keeps developer user secrets, Swagger, and local CORS out of the test host,
@@ -92,7 +110,7 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
         builder.UseSetting("Security:ApiKeys:2:Hash", ApiKeyStore.ComputeHash(ExecutorApiKey));
         builder.UseSetting("Security:ApiKeys:2:Roles", ApiKeyRoles.Executor);
 
-        foreach (var policy in new[] { "Reads", "Writes", "Anonymous", "Health" })
+        foreach (var policy in new[] { "Reads", "Writes", "Anonymous", "Health", "Execute" })
         {
             builder.UseSetting($"RateLimiting:{policy}:PermitLimit", UnrestrictedPermitLimit);
         }

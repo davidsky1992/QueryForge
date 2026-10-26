@@ -34,10 +34,17 @@ public sealed class ExecutionOptions
 
     /// <summary>Upstream ports that may be contacted.</summary>
     public List<int> AllowedPorts { get; set; } = [80, 443];
+
+    /// <summary>Upstream calls in flight at once, per API instance. Further requests get 503 rather than queueing.</summary>
+    public int MaxConcurrentExecutions { get; set; } = 20;
+
+    /// <summary>Largest accepted execution request body. A constant so the server limit and the reader agree.</summary>
+    public const int MaxRequestBodyBytes = 16 * 1024;
 }
 
 public static class ExecutionErrors
 {
     public const string OperationDisabled = "operation_disabled";
     public const string UpstreamAuthNotSupported = "upstream_auth_not_supported";
+    public const string RequestTooLarge = "request_too_large";
 }
