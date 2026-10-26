@@ -25,6 +25,7 @@ public static class AuditActions
     public const string OperationCreated = "operation.created";
     public const string OperationUpdated = "operation.updated";
     public const string OperationDeleted = "operation.deleted";
+    public const string OperationExecuted = "operation.executed";
 }
 
 public static class AuditTargets

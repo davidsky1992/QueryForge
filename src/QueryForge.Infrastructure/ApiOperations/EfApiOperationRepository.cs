@@ -15,6 +15,18 @@ internal sealed class EfApiOperationRepository : IApiOperationRepository
         _dbContext = dbContext;
     }
 
+    public async Task<ExecutionTarget?> FindForExecutionAsync(string definitionSlug, string operationKey, CancellationToken cancellationToken)
+    {
+        var match = await (
+                from operation in _dbContext.ApiOperations.AsNoTracking()
+                join definition in _dbContext.ApiDefinitions.AsNoTracking() on operation.ApiDefinitionId equals definition.Id
+                where definition.Slug == definitionSlug && operation.Key == operationKey
+                select new { definition, operation })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return match is null ? null : new ExecutionTarget(match.definition, match.operation);
+    }
+
     public Task<bool> DefinitionExistsAsync(Guid apiDefinitionId, CancellationToken cancellationToken)
     {
         return _dbContext.ApiDefinitions.AnyAsync(apiDefinition => apiDefinition.Id == apiDefinitionId, cancellationToken);

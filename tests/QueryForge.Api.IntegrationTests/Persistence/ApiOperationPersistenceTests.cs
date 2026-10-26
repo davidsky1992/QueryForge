@@ -68,6 +68,25 @@ public sealed class ApiOperationPersistenceTests : ApiTestBase
     }
 
     [Fact]
+    public async Task FindForExecution_LoadsDefinitionOperationAndParametersBySlugAndKey()
+    {
+        var weather = await SeedDefinitionAsync("weather");
+        var other = await SeedDefinitionAsync("other");
+        await AddOperationAsync(weather, "lookup", withParameter: true);
+        await AddOperationAsync(other, "lookup");
+
+        var target = await WithRepositoryAsync(repository => repository.FindForExecutionAsync("weather", "lookup", CancellationToken.None));
+        var wrongPair = await WithRepositoryAsync(repository => repository.FindForExecutionAsync("weather", "missing", CancellationToken.None));
+
+        Assert.NotNull(target);
+        Assert.Equal(weather, target.Definition.Id);
+        Assert.Equal(weather, target.Operation.ApiDefinitionId);
+        Assert.Equal("https://api.example.test", target.Definition.BaseUrl);
+        Assert.Equal(["q"], target.Operation.Parameters.Select(parameter => parameter.Name));
+        Assert.Null(wrongPair);
+    }
+
+    [Fact]
     public async Task OperationKey_IsUniquePerDefinitionOnly()
     {
         var first = await SeedDefinitionAsync("first");

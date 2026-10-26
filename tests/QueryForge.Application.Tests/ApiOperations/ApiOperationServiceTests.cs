@@ -254,6 +254,9 @@ public sealed class ApiOperationServiceTests
             return operation;
         }
 
+        public Task<ExecutionTarget?> FindForExecutionAsync(string definitionSlug, string operationKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<bool> DefinitionExistsAsync(Guid apiDefinitionId, CancellationToken cancellationToken) =>
             Task.FromResult(apiDefinitionId == DefinitionId);
 
