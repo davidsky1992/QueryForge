@@ -3,7 +3,9 @@ using Microsoft.Extensions.Caching.StackExchangeRedis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using QueryForge.Application.ApiDefinitions;
+using QueryForge.Application.ApiOperations;
 using QueryForge.Infrastructure.ApiDefinitions;
+using QueryForge.Infrastructure.ApiOperations;
 using QueryForge.Infrastructure.Persistence;
 using StackExchange.Redis;
 
@@ -22,6 +24,7 @@ public static class DependencyInjection
             options.UseSqlServer(sqlServerConnectionString));
 
         services.AddScoped<IApiDefinitionRepository, EfApiDefinitionRepository>();
+        services.AddScoped<IApiOperationRepository, EfApiOperationRepository>();
 
         var redisConnectionString = configuration.GetConnectionString("Redis");
         if (!string.IsNullOrWhiteSpace(redisConnectionString))

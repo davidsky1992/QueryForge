@@ -42,7 +42,9 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
     {
         using var scope = Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<QueryForgeDbContext>();
+        // Operations and their parameters are removed by the cascade from ApiDefinitions.
         await dbContext.ApiDefinitions.ExecuteDeleteAsync();
+        await dbContext.AuditEvents.ExecuteDeleteAsync();
     }
 
     /// <summary>Creates a client that sends the given API key, or no key when null.</summary>
