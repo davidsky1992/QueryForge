@@ -69,6 +69,16 @@ public abstract class ApiTestBase : IAsyncLifetime
         return $"{BasePath}/{id}?rowVersion={Uri.EscapeDataString(rowVersion)}";
     }
 
+    /// <summary>
+    /// Compares by JSON content. Needed for DTOs with list properties, whose record equality compares the lists by
+    /// reference.
+    /// </summary>
+    protected static void AssertJsonEqual<T>(T expected, T? actual)
+    {
+        Assert.NotNull(actual);
+        Assert.Equal(JsonSerializer.Serialize(expected), JsonSerializer.Serialize(actual));
+    }
+
     /// <summary>Asserts an RFC 9457 ProblemDetails response and returns its JSON for further checks.</summary>
     protected static async Task<JsonElement> AssertProblemAsync(HttpResponseMessage response, HttpStatusCode expectedStatus)
     {

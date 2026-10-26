@@ -39,6 +39,9 @@ public static partial class ApiOperationValidator
         return [.. issues, .. ApiDefinitionValidator.ValidateRowVersion(request.RowVersion, out parsedRowVersion)];
     }
 
+    public static IReadOnlyList<ValidationIssue> ValidateRowVersion(string? rowVersion, out byte[] parsedRowVersion) =>
+        ApiDefinitionValidator.ValidateRowVersion(rowVersion, out parsedRowVersion);
+
     /// <summary>Parses a path template into its placeholder names, or returns an error message.</summary>
     public static string? TryParsePathTemplate(string? template, out IReadOnlyList<string> placeholders)
     {

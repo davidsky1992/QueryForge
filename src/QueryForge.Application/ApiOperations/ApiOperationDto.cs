@@ -70,10 +70,14 @@ public static class ApiOperationMapper
             parameter.Type,
             parameter.IsRequired,
             parameter.MaxLength,
-            parameter.Minimum,
-            parameter.Maximum,
+            Normalize(parameter.Minimum),
+            Normalize(parameter.Maximum),
             parameter.Pattern,
             parameter.AllowedValues,
             parameter.DefaultValue);
     }
+
+    // The database column has a fixed scale, so 1 is read back as 1.0000000000. Dividing by 1 with maximal scale
+    // removes trailing zeros, so a value is reported the same way whether it was just created or read back.
+    private static decimal? Normalize(decimal? value) => value / 1.000000000000000000000000000000000m;
 }

@@ -4,8 +4,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using QueryForge.Application.ApiDefinitions;
 using QueryForge.Application.ApiOperations;
+using QueryForge.Application.Auditing;
 using QueryForge.Infrastructure.ApiDefinitions;
 using QueryForge.Infrastructure.ApiOperations;
+using QueryForge.Infrastructure.Auditing;
 using QueryForge.Infrastructure.Persistence;
 using StackExchange.Redis;
 
@@ -25,6 +27,7 @@ public static class DependencyInjection
 
         services.AddScoped<IApiDefinitionRepository, EfApiDefinitionRepository>();
         services.AddScoped<IApiOperationRepository, EfApiOperationRepository>();
+        services.AddScoped<IAuditLog, EfAuditLog>();
 
         var redisConnectionString = configuration.GetConnectionString("Redis");
         if (!string.IsNullOrWhiteSpace(redisConnectionString))

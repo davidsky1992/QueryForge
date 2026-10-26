@@ -11,10 +11,16 @@ public static class ApiKeyRoles
     /// <summary>Read API definitions.</summary>
     public const string Reader = "reader";
 
-    /// <summary>Read and modify API definitions and view detailed health.</summary>
+    /// <summary>Read and modify API definitions and their operations, and view detailed health.</summary>
     public const string Admin = "admin";
 
-    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal) { Reader, Admin };
+    /// <summary>
+    /// Execute operations only (once execution is enabled). Grants no access to the management endpoints: an
+    /// executor key can neither read nor change definitions or operations.
+    /// </summary>
+    public const string Executor = "executor";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal) { Reader, Admin, Executor };
 }
 
 public static class AuthorizationPolicies

@@ -53,6 +53,19 @@ public sealed class ApiOperationDomainTests
     }
 
     [Fact]
+    public void ToDto_ReportsDecimalsWithoutStorageScale()
+    {
+        // As read back from a decimal(38,10) column.
+        var parameter = new OperationParameter("n", ParameterLocation.Query, ParameterType.Number, false, null, 1.0000000000m, 7.2500000000m, null, null, null);
+        var operation = ApiOperation.Create(Guid.NewGuid(), "k", OperationHttpMethod.Get, "/", 10, 1024, true, [parameter], Created);
+
+        var dto = Assert.Single(operation.ToDto().Parameters);
+
+        Assert.Equal("1", dto.Minimum!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal("7.25", dto.Maximum!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
     public void AuditEvent_BoundsEveryTextField()
     {
         var longText = new string('x', 500);

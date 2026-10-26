@@ -16,7 +16,7 @@ param(
     [string] $Name,
 
     [Parameter(Mandatory = $true)]
-    [ValidateSet('admin', 'reader')]
+    [ValidateSet('admin', 'reader', 'executor')]
     [string] $Role
 )
 

@@ -2,10 +2,12 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
 using QueryForge.Api.Health;
+using QueryForge.Api.Http;
 using QueryForge.Api.Middleware;
 using QueryForge.Api.RateLimiting;
 using QueryForge.Api.Security;
 using QueryForge.Application;
+using QueryForge.Application.Auditing;
 using QueryForge.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +16,8 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddApiKeySecurity(builder.Configuration);
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IRequestContext, HttpRequestContext>();
 builder.Services.AddApiRateLimiting(builder.Configuration);
 builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
 builder.Services.AddTrustedForwardedHeaders(builder.Configuration);

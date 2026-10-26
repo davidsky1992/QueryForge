@@ -103,6 +103,14 @@ public sealed class SecurityOptionsValidatorTests
     }
 
     [Theory]
+    [InlineData("executor")]
+    [InlineData("executor, admin")]
+    public void ExecutorRole_IsAccepted(string roles)
+    {
+        Assert.True(Validate("Production", new ApiKeyOptions { Name = "runner", Hash = ValidHash, Roles = roles }).Succeeded);
+    }
+
+    [Theory]
     [InlineData("", "admin", "Name is required")]
     [InlineData("key", "", "at least one role")]
     [InlineData("key", "superuser", "unknown role 'superuser'")]

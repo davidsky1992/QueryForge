@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using QueryForge.Api.Http;
 using QueryForge.Api.RateLimiting;
 using QueryForge.Api.Security;
 using QueryForge.Application.ApiDefinitions;
@@ -98,50 +99,6 @@ public sealed class ApiDefinitionsController : ControllerBase
 
     private ActionResult<ApiDefinitionDto> ToActionResult(Result<ApiDefinitionDto> result)
     {
-        if (result.IsSuccess)
-        {
-            return Ok(result.Value);
-        }
-
-        return result.ErrorCode switch
-        {
-            Errors.Validation => BadRequest(new ValidationProblemDetails(ToModelState(result.ValidationIssues))
-            {
-                Title = "One or more validation errors occurred.",
-                Status = StatusCodes.Status400BadRequest
-            }),
-            Errors.NotFound => NotFound(new ProblemDetails
-            {
-                Title = "Resource not found",
-                Detail = result.ErrorMessage,
-                Status = StatusCodes.Status404NotFound
-            }),
-            Errors.Conflict => Conflict(new ProblemDetails
-            {
-                Title = "Conflict",
-                Detail = result.ErrorMessage,
-                Status = StatusCodes.Status409Conflict
-            }),
-            Errors.ConcurrencyConflict => Conflict(new ProblemDetails
-            {
-                Title = "Concurrency conflict",
-                Detail = result.ErrorMessage,
-                Status = StatusCodes.Status409Conflict,
-                Extensions = { ["code"] = Errors.ConcurrencyConflict }
-            }),
-            _ => BadRequest(new ProblemDetails
-            {
-                Title = "Request failed",
-                Detail = result.ErrorMessage,
-                Status = StatusCodes.Status400BadRequest
-            })
-        };
-    }
-
-    private static Dictionary<string, string[]> ToModelState(IReadOnlyList<ValidationIssue> issues)
-    {
-        return issues
-            .GroupBy(issue => issue.Field)
-            .ToDictionary(group => group.Key, group => group.Select(issue => issue.Message).ToArray());
+        return result.IsSuccess ? Ok(result.Value) : this.ToFailureResult(result);
     }
 }

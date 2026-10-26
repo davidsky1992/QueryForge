@@ -27,6 +27,7 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
 
     public string AdminApiKey { get; } = GenerateApiKey();
     public string ReaderApiKey { get; } = GenerateApiKey();
+    public string ExecutorApiKey { get; } = GenerateApiKey();
     public InMemoryLoggerProvider Logs { get; } = new();
 
     public async Task InitializeAsync()
@@ -87,6 +88,9 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
         builder.UseSetting("Security:ApiKeys:1:Name", "test-reader");
         builder.UseSetting("Security:ApiKeys:1:Hash", ApiKeyStore.ComputeHash(ReaderApiKey));
         builder.UseSetting("Security:ApiKeys:1:Roles", ApiKeyRoles.Reader);
+        builder.UseSetting("Security:ApiKeys:2:Name", "test-executor");
+        builder.UseSetting("Security:ApiKeys:2:Hash", ApiKeyStore.ComputeHash(ExecutorApiKey));
+        builder.UseSetting("Security:ApiKeys:2:Roles", ApiKeyRoles.Executor);
 
         foreach (var policy in new[] { "Reads", "Writes", "Anonymous", "Health" })
         {
