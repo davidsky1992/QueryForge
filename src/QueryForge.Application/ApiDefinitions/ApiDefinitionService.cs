@@ -1,4 +1,5 @@
 using QueryForge.Application.Common;
+using QueryForge.Application.Secrets;
 using QueryForge.Domain.ApiDefinitions;
 
 namespace QueryForge.Application.ApiDefinitions;
@@ -6,11 +7,13 @@ namespace QueryForge.Application.ApiDefinitions;
 public sealed class ApiDefinitionService : IApiDefinitionService
 {
     private readonly IApiDefinitionRepository _repository;
+    private readonly ISecretProvider _secretProvider;
     private readonly TimeProvider _timeProvider;
 
-    public ApiDefinitionService(IApiDefinitionRepository repository, TimeProvider timeProvider)
+    public ApiDefinitionService(IApiDefinitionRepository repository, ISecretProvider secretProvider, TimeProvider timeProvider)
     {
         _repository = repository;
+        _secretProvider = secretProvider;
         _timeProvider = timeProvider;
     }
 
@@ -36,12 +39,14 @@ public sealed class ApiDefinitionService : IApiDefinitionService
             request.AuthenticationType,
             request.DocumentationUrl,
             request.Tags,
-            _timeProvider.GetUtcNow());
+            _timeProvider.GetUtcNow(),
+            request.UpstreamSecretName,
+            request.ApiKeyHeaderName);
 
         await _repository.AddAsync(apiDefinition, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
 
-        return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto());
+        return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto(_secretProvider));
     }
 
     public async Task<Result<ApiDefinitionDto>> UpdateAsync(Guid id, UpdateApiDefinitionRequest request, CancellationToken cancellationToken)
@@ -73,14 +78,16 @@ public sealed class ApiDefinitionService : IApiDefinitionService
             request.AuthenticationType,
             request.DocumentationUrl,
             request.Tags,
-            _timeProvider.GetUtcNow());
+            _timeProvider.GetUtcNow(),
+            request.UpstreamSecretName,
+            request.ApiKeyHeaderName);
 
         if (!await TrySaveChangesAsync(cancellationToken))
         {
             return ConcurrencyConflict();
         }
 
-        return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto());
+        return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto(_secretProvider));
     }
 
     public async Task<Result<ApiDefinitionDto>> DeleteAsync(Guid id, string? rowVersion, CancellationToken cancellationToken)
@@ -105,7 +112,7 @@ public sealed class ApiDefinitionService : IApiDefinitionService
             return ConcurrencyConflict();
         }
 
-        return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto());
+        return Result<ApiDefinitionDto>.Success(apiDefinition.ToDto(_secretProvider));
     }
 
     public async Task<Result<ApiDefinitionDto>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
@@ -114,13 +121,13 @@ public sealed class ApiDefinitionService : IApiDefinitionService
 
         return apiDefinition is null
             ? Result<ApiDefinitionDto>.Failure(Errors.NotFound, "API definition was not found.")
-            : Result<ApiDefinitionDto>.Success(apiDefinition.ToDto());
+            : Result<ApiDefinitionDto>.Success(apiDefinition.ToDto(_secretProvider));
     }
 
     public async Task<PagedResult<ApiDefinitionDto>> ListAsync(ApiDefinitionQuery query, CancellationToken cancellationToken)
     {
         var page = await _repository.ListAsync(query, cancellationToken);
-        var items = page.Items.Select(item => item.ToDto()).ToArray();
+        var items = page.Items.Select(item => item.ToDto(_secretProvider)).ToArray();
 
         return new PagedResult<ApiDefinitionDto>(items, page.PageNumber, page.PageSize, page.TotalCount);
     }

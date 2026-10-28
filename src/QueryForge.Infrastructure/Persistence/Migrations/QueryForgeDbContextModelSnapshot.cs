@@ -28,6 +28,10 @@ namespace QueryForge.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("ApiKeyHeaderName")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<string>("AuthenticationType")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -76,6 +80,10 @@ namespace QueryForge.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("UpdatedAtUtc")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UpstreamSecretName")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
 
                     b.HasKey("Id");
 

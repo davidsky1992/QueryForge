@@ -29,6 +29,10 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
     public string AdminApiKey { get; } = GenerateApiKey();
     public string ReaderApiKey { get; } = GenerateApiKey();
     public string ExecutorApiKey { get; } = GenerateApiKey();
+
+    /// <summary>Name of an upstream secret configured in the test host; its value is random per run.</summary>
+    public const string UpstreamSecretName = "test-upstream";
+    public string UpstreamSecretValue { get; } = "upstream-" + GenerateApiKey();
     public InMemoryLoggerProvider Logs { get; } = new();
 
     public async Task InitializeAsync()
@@ -109,6 +113,7 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
         builder.UseSetting("Security:ApiKeys:2:Name", "test-executor");
         builder.UseSetting("Security:ApiKeys:2:Hash", ApiKeyStore.ComputeHash(ExecutorApiKey));
         builder.UseSetting("Security:ApiKeys:2:Roles", ApiKeyRoles.Executor);
+        builder.UseSetting($"Execution:Secrets:{UpstreamSecretName}", UpstreamSecretValue);
 
         foreach (var policy in new[] { "Reads", "Writes", "Anonymous", "Health", "Execute" })
         {

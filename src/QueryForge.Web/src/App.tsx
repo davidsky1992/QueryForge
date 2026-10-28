@@ -23,7 +23,9 @@ const emptyForm: ApiDefinitionFormValues = {
   status: ApiDefinitionStatus.Draft,
   authenticationType: ApiAuthenticationType.None,
   documentationUrl: "",
-  tags: ""
+  tags: "",
+  upstreamSecretName: "",
+  apiKeyHeaderName: ""
 };
 
 export default function App() {
@@ -145,7 +147,9 @@ export default function App() {
       status: apiDefinition.status,
       authenticationType: apiDefinition.authenticationType,
       documentationUrl: apiDefinition.documentationUrl ?? "",
-      tags: apiDefinition.tags ?? ""
+      tags: apiDefinition.tags ?? "",
+      upstreamSecretName: apiDefinition.upstreamSecretName ?? "",
+      apiKeyHeaderName: apiDefinition.apiKeyHeaderName ?? ""
     });
   }
 

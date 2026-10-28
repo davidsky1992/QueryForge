@@ -21,6 +21,7 @@ namespace QueryForge.Api.IntegrationTests.Persistence;
 public sealed class ApiOperationPersistenceTests : ApiTestBase
 {
     private const string InitialMigration = "20261015113404_InitialCreate";
+    private const string OperationsMigration = "20261026024029_AddApiOperationsAndAuditEvents";
     private static readonly DateTimeOffset Now = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
 
     public ApiOperationPersistenceTests(QueryForgeApiFactory factory)
@@ -235,10 +236,10 @@ public sealed class ApiOperationPersistenceTests : ApiTestBase
         {
             // Database as it was before this migration, with existing data.
             await migrator.MigrateAsync(InitialMigration);
-            var existing = ApiDefinition.Create("Existing", "existing", null, "https://api.example.test", ApiDefinitionStatus.Active,
-                ApiAuthenticationType.None, null, null, Now);
-            dbContext.ApiDefinitions.Add(existing);
-            await dbContext.SaveChangesAsync();
+            // Inserted with SQL matching the initial schema: the current EF model has columns that do not exist yet.
+            var existingId = Guid.NewGuid();
+            await dbContext.Database.ExecuteSqlAsync(
+                $"INSERT INTO ApiDefinitions (Id, Name, Slug, BaseUrl, Status, AuthenticationType, CreatedAtUtc) VALUES ({existingId}, N'Existing', N'existing', N'https://api.example.test', N'Active', N'None', {Now})");
             Assert.False(await TableExistsAsync(dbContext, "ApiOperations"));
 
             // Up: new tables appear and the existing row is untouched.
@@ -248,7 +249,8 @@ public sealed class ApiOperationPersistenceTests : ApiTestBase
             Assert.True(await TableExistsAsync(dbContext, "AuditEvents"));
             dbContext.ChangeTracker.Clear();
             var afterUp = await dbContext.ApiDefinitions.AsNoTracking().SingleAsync();
-            Assert.Equal(existing.Id, afterUp.Id);
+            Assert.Equal(existingId, afterUp.Id);
+            Assert.Null(afterUp.UpstreamSecretName);
             Assert.Equal("existing", afterUp.Slug);
 
             // Down: only the new tables are removed; the definition survives.
@@ -262,6 +264,17 @@ public sealed class ApiOperationPersistenceTests : ApiTestBase
             // And Up again from there.
             await migrator.MigrateAsync();
             Assert.True(await TableExistsAsync(dbContext, "ApiOperations"));
+
+            // The upstream secret reference migration only adds two nullable columns, and Down removes only those.
+            Assert.True(await ColumnExistsAsync(dbContext, "UpstreamSecretName"));
+            Assert.True(await ColumnExistsAsync(dbContext, "ApiKeyHeaderName"));
+            await migrator.MigrateAsync(OperationsMigration);
+            Assert.False(await ColumnExistsAsync(dbContext, "UpstreamSecretName"));
+            Assert.False(await ColumnExistsAsync(dbContext, "ApiKeyHeaderName"));
+            Assert.True(await TableExistsAsync(dbContext, "ApiOperations"));
+            Assert.Equal(1, await dbContext.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS [Value] FROM ApiDefinitions").SingleAsync());
+            await migrator.MigrateAsync();
+            Assert.True(await ColumnExistsAsync(dbContext, "UpstreamSecretName"));
         }
         finally
         {
@@ -312,6 +325,10 @@ public sealed class ApiOperationPersistenceTests : ApiTestBase
     private static Task<bool> TableExistsAsync(QueryForgeDbContext dbContext, string table) =>
         dbContext.Database.SqlQuery<int>($"SELECT COUNT(*) AS [Value] FROM sys.tables WHERE name = {table}").SingleAsync()
             .ContinueWith(count => count.Result == 1, TaskScheduler.Default);
+
+    private static async Task<bool> ColumnExistsAsync(QueryForgeDbContext dbContext, string column) =>
+        await dbContext.Database.SqlQuery<int>(
+            $"SELECT COUNT(*) AS [Value] FROM sys.columns WHERE object_id = OBJECT_ID('ApiDefinitions') AND name = {column}").SingleAsync() == 1;
 
     private async Task WithRepositoryAsync(Func<IApiOperationRepository, Task> action)
     {

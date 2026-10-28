@@ -11,4 +11,6 @@ public sealed record UpdateApiDefinitionRequest(
     ApiAuthenticationType AuthenticationType,
     string? DocumentationUrl,
     string? Tags,
-    string RowVersion);
+    string RowVersion,
+    string? UpstreamSecretName = null,
+    string? ApiKeyHeaderName = null);

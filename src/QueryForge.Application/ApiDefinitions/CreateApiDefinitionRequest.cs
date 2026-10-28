@@ -10,4 +10,6 @@ public sealed record CreateApiDefinitionRequest(
     ApiDefinitionStatus Status,
     ApiAuthenticationType AuthenticationType,
     string? DocumentationUrl,
-    string? Tags);
+    string? Tags,
+    string? UpstreamSecretName = null,
+    string? ApiKeyHeaderName = null);

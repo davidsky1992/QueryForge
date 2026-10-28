@@ -51,5 +51,12 @@ internal sealed class ApiDefinitionConfiguration : IEntityTypeConfiguration<ApiD
 
         builder.Property(apiDefinition => apiDefinition.RowVersion)
             .IsRowVersion();
+
+        // A secret name only; the value is never stored in the database.
+        builder.Property(apiDefinition => apiDefinition.UpstreamSecretName)
+            .HasMaxLength(64);
+
+        builder.Property(apiDefinition => apiDefinition.ApiKeyHeaderName)
+            .HasMaxLength(64);
     }
 }

@@ -25,6 +25,10 @@ export type ApiDefinition = {
   createdAtUtc: string;
   updatedAtUtc: string | null;
   rowVersion: string;
+  // ApiKey authentication: the secret's name only (never its value) and whether a value is configured.
+  upstreamSecretName: string | null;
+  apiKeyHeaderName: string | null;
+  secretConfigured: boolean;
 };
 
 export type ApiDefinitionFormValues = {
@@ -36,6 +40,9 @@ export type ApiDefinitionFormValues = {
   authenticationType: ApiAuthenticationType;
   documentationUrl: string;
   tags: string;
+  // Updates replace the whole definition, so these are carried through even before the form edits them.
+  upstreamSecretName: string;
+  apiKeyHeaderName: string;
 };
 
 export type PagedResult<T> = {

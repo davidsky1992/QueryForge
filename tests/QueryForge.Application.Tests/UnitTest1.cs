@@ -173,9 +173,178 @@ public sealed class ApiDefinitionServiceTests
         Assert.Equal(PagedRequest.MaxPageSize, result.PageSize);
     }
 
-    private static ApiDefinitionService CreateService(FakeApiDefinitionRepository repository)
+    [Fact]
+    public async Task CreateAsync_WithApiKeySecretReference_StoresNameAndHeaderAndReportsConfigured()
     {
-        return new ApiDefinitionService(repository, new FixedTimeProvider(Now));
+        var service = CreateService(new FakeApiDefinitionRepository(), new FakeSecretProvider("weather-api"));
+        var request = ValidCreateRequest() with
+        {
+            AuthenticationType = ApiAuthenticationType.ApiKey,
+            UpstreamSecretName = " Weather-API ",
+            ApiKeyHeaderName = " X-API-Key "
+        };
+
+        var result = await service.CreateAsync(request, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("weather-api", result.Value!.UpstreamSecretName);
+        Assert.Equal("X-API-Key", result.Value.ApiKeyHeaderName);
+        Assert.True(result.Value.SecretConfigured);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithSecretNameWithoutValue_ReportsNotConfigured()
+    {
+        var service = CreateService(new FakeApiDefinitionRepository(), new FakeSecretProvider());
+        var request = ValidCreateRequest() with
+        {
+            AuthenticationType = ApiAuthenticationType.ApiKey,
+            UpstreamSecretName = "weather-api",
+            ApiKeyHeaderName = "X-API-Key"
+        };
+
+        var result = await service.CreateAsync(request, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value!.SecretConfigured);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ApiKeyWithoutSecretReference_IsAllowedForCatalogUse()
+    {
+        var service = CreateService(new FakeApiDefinitionRepository());
+
+        var result = await service.CreateAsync(ValidCreateRequest() with { AuthenticationType = ApiAuthenticationType.ApiKey }, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value!.UpstreamSecretName);
+        Assert.False(result.Value.SecretConfigured);
+    }
+
+    [Theory]
+    [InlineData(ApiAuthenticationType.None)]
+    [InlineData(ApiAuthenticationType.BearerToken)]
+    [InlineData(ApiAuthenticationType.Basic)]
+    public async Task CreateAsync_SecretReferenceWithOtherAuthentication_IsRejected(ApiAuthenticationType authenticationType)
+    {
+        var request = ValidCreateRequest() with { AuthenticationType = authenticationType, UpstreamSecretName = "weather-api", ApiKeyHeaderName = "X-API-Key" };
+
+        await AssertValidationIssueAsync(request, "upstreamSecretName");
+    }
+
+    [Theory]
+    [InlineData("weather-api", null, "apiKeyHeaderName")]
+    [InlineData(null, "X-API-Key", "upstreamSecretName")]
+    [InlineData("weather api", "X-API-Key", "upstreamSecretName")]
+    [InlineData("weather_api", "X-API-Key", "upstreamSecretName")]
+    [InlineData("-weather", "X-API-Key", "upstreamSecretName")]
+    [InlineData("weather-api", "X API Key", "apiKeyHeaderName")]
+    [InlineData("weather-api", "X-Key:", "apiKeyHeaderName")]
+    [InlineData("weather-api", "X-Key\r\nX-Injected", "apiKeyHeaderName")]
+    public async Task CreateAsync_IncompleteOrMalformedSecretReference_IsRejected(string? secretName, string? headerName, string field)
+    {
+        var request = ValidCreateRequest() with { AuthenticationType = ApiAuthenticationType.ApiKey, UpstreamSecretName = secretName, ApiKeyHeaderName = headerName };
+
+        await AssertValidationIssueAsync(request, field);
+    }
+
+    [Theory]
+    [InlineData("Host")]
+    [InlineData("host")]
+    [InlineData("Content-Length")]
+    [InlineData("Transfer-Encoding")]
+    [InlineData("Connection")]
+    [InlineData("Cookie")]
+    [InlineData("User-Agent")]
+    [InlineData("Accept")]
+    [InlineData("Proxy-Authorization")]
+    [InlineData("X-Forwarded-For")]
+    [InlineData("X-Forwarded-Host")]
+    [InlineData("Forwarded")]
+    [InlineData("Sec-Fetch-Site")]
+    public async Task CreateAsync_ForbiddenHeaderNames_AreRejected(string headerName)
+    {
+        var request = ValidCreateRequest() with { AuthenticationType = ApiAuthenticationType.ApiKey, UpstreamSecretName = "weather-api", ApiKeyHeaderName = headerName };
+
+        await AssertValidationIssueAsync(request, "apiKeyHeaderName");
+    }
+
+    [Theory]
+    [InlineData("X-API-Key")]
+    [InlineData("Authorization")]
+    [InlineData("api-key")]
+    [InlineData("Ocp-Apim-Subscription-Key")]
+    public async Task CreateAsync_CommonApiKeyHeaders_AreAccepted(string headerName)
+    {
+        var request = ValidCreateRequest() with { AuthenticationType = ApiAuthenticationType.ApiKey, UpstreamSecretName = "weather-api", ApiKeyHeaderName = headerName };
+
+        var result = await CreateService(new FakeApiDefinitionRepository()).CreateAsync(request, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ReplacesTheReference_SoClientsMustSendItBack()
+    {
+        // Updates replace the whole definition: sending the reference keeps it, omitting it clears it.
+        var repository = new FakeApiDefinitionRepository();
+        var existing = repository.Seed(ApiDefinition.Create("Orders API", "orders-api", null, "https://api.example.test",
+            ApiDefinitionStatus.Active, ApiAuthenticationType.ApiKey, null, null, Now, "weather-api", "X-API-Key"), CurrentVersion);
+        var service = CreateService(repository);
+        var request = ValidUpdateRequest(CurrentVersion) with { AuthenticationType = ApiAuthenticationType.ApiKey };
+
+        var kept = await service.UpdateAsync(existing.Id, request with { UpstreamSecretName = "weather-api", ApiKeyHeaderName = "X-API-Key" }, CancellationToken.None);
+        Assert.Equal("weather-api", kept.Value!.UpstreamSecretName);
+        Assert.Equal("X-API-Key", kept.Value.ApiKeyHeaderName);
+
+        var cleared = await service.UpdateAsync(existing.Id, request, CancellationToken.None);
+        Assert.Null(cleared.Value!.UpstreamSecretName);
+        Assert.Null(cleared.Value.ApiKeyHeaderName);
+    }
+
+    [Fact]
+    public async Task Dto_NeverContainsTheSecretValue()
+    {
+        const string secretValue = "SECRET-VALUE-0c7d";
+        var service = CreateService(new FakeApiDefinitionRepository(), FakeSecretProvider.WithValue("weather-api", secretValue));
+        var request = ValidCreateRequest() with { AuthenticationType = ApiAuthenticationType.ApiKey, UpstreamSecretName = "weather-api", ApiKeyHeaderName = "X-API-Key" };
+
+        var result = await service.CreateAsync(request, CancellationToken.None);
+
+        Assert.DoesNotContain(secretValue, System.Text.Json.JsonSerializer.Serialize(result.Value));
+    }
+
+    private static async Task AssertValidationIssueAsync(CreateApiDefinitionRequest request, string field)
+    {
+        var result = await CreateService(new FakeApiDefinitionRepository()).CreateAsync(request, CancellationToken.None);
+
+        Assert.Equal(Errors.Validation, result.ErrorCode);
+        Assert.Contains(result.ValidationIssues, issue => issue.Field == field);
+    }
+
+    private static ApiDefinitionService CreateService(FakeApiDefinitionRepository repository, FakeSecretProvider? secretProvider = null)
+    {
+        return new ApiDefinitionService(repository, secretProvider ?? new FakeSecretProvider(), new FixedTimeProvider(Now));
+    }
+
+    private sealed class FakeSecretProvider : QueryForge.Application.Secrets.ISecretProvider
+    {
+        private readonly Dictionary<string, string> _secrets;
+
+        public FakeSecretProvider(params string[] configuredNames)
+        {
+            _secrets = configuredNames.ToDictionary(name => name, _ => "configured-value");
+        }
+
+        private FakeSecretProvider(Dictionary<string, string> secrets)
+        {
+            _secrets = secrets;
+        }
+
+        public static FakeSecretProvider WithValue(string name, string value) => new(new Dictionary<string, string> { [name] = value });
+
+        public bool TryGetSecret(string name, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value) =>
+            _secrets.TryGetValue(name, out value);
     }
 
     private static ApiDefinition CreateDefinition()

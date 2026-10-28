@@ -43,6 +43,15 @@ public sealed class ApiDefinition
     public DateTimeOffset? UpdatedAtUtc { get; private set; }
     public byte[] RowVersion { get; private set; } = [];
 
+    /// <summary>
+    /// Name of the configured secret holding the upstream API key (ApiKey authentication only). The secret value is
+    /// never stored here; it is read from configuration (<c>Execution:Secrets:&lt;name&gt;</c>) when executing.
+    /// </summary>
+    public string? UpstreamSecretName { get; private set; }
+
+    /// <summary>Request header the upstream API key is sent in (ApiKey authentication only).</summary>
+    public string? ApiKeyHeaderName { get; private set; }
+
     public static ApiDefinition Create(
         string name,
         string slug,
@@ -52,7 +61,9 @@ public sealed class ApiDefinition
         ApiAuthenticationType authenticationType,
         string? documentationUrl,
         string? tags,
-        DateTimeOffset createdAtUtc)
+        DateTimeOffset createdAtUtc,
+        string? upstreamSecretName = null,
+        string? apiKeyHeaderName = null)
     {
         return new ApiDefinition(
             Guid.NewGuid(),
@@ -64,7 +75,11 @@ public sealed class ApiDefinition
             authenticationType,
             NormalizeOptional(documentationUrl),
             NormalizeOptional(tags),
-            createdAtUtc);
+            createdAtUtc)
+        {
+            UpstreamSecretName = NormalizeOptional(upstreamSecretName)?.ToLowerInvariant(),
+            ApiKeyHeaderName = NormalizeOptional(apiKeyHeaderName)
+        };
     }
 
     public void Update(
@@ -76,8 +91,12 @@ public sealed class ApiDefinition
         ApiAuthenticationType authenticationType,
         string? documentationUrl,
         string? tags,
-        DateTimeOffset updatedAtUtc)
+        DateTimeOffset updatedAtUtc,
+        string? upstreamSecretName = null,
+        string? apiKeyHeaderName = null)
     {
+        UpstreamSecretName = NormalizeOptional(upstreamSecretName)?.ToLowerInvariant();
+        ApiKeyHeaderName = NormalizeOptional(apiKeyHeaderName);
         Name = name.Trim();
         Slug = slug.Trim().ToLowerInvariant();
         Description = NormalizeOptional(description);

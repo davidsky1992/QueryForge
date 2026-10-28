@@ -61,6 +61,8 @@ function normalizePayload(values: ApiDefinitionFormValues) {
     ...values,
     description: values.description.trim() || null,
     documentationUrl: values.documentationUrl.trim() || null,
-    tags: values.tags.trim() || null
+    tags: values.tags.trim() || null,
+    upstreamSecretName: values.upstreamSecretName.trim() || null,
+    apiKeyHeaderName: values.apiKeyHeaderName.trim() || null
   };
 }

@@ -54,7 +54,9 @@ public abstract class ApiTestBase : IAsyncLifetime
             current.AuthenticationType,
             current.DocumentationUrl,
             current.Tags,
-            rowVersion ?? current.RowVersion);
+            rowVersion ?? current.RowVersion,
+            current.UpstreamSecretName,
+            current.ApiKeyHeaderName);
     }
 
     protected async Task<ApiDefinitionDto> CreateAsync(CreateApiDefinitionRequest request)
