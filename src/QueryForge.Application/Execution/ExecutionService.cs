@@ -2,6 +2,7 @@ using System.Text.Json;
 using QueryForge.Application.ApiOperations;
 using QueryForge.Application.Auditing;
 using QueryForge.Application.Common;
+using QueryForge.Application.Secrets;
 using QueryForge.Domain.ApiDefinitions;
 using QueryForge.Domain.Auditing;
 
@@ -24,6 +25,7 @@ public sealed class ExecutionService : IExecutionService
     private readonly IAuditLog _auditLog;
     private readonly IRequestContext _requestContext;
     private readonly ExecutionOptions _options;
+    private readonly ISecretProvider _secretProvider;
     private readonly TimeProvider _timeProvider;
 
     public ExecutionService(
@@ -32,6 +34,7 @@ public sealed class ExecutionService : IExecutionService
         IAuditLog auditLog,
         IRequestContext requestContext,
         ExecutionOptions options,
+        ISecretProvider secretProvider,
         TimeProvider timeProvider)
     {
         _repository = repository;
@@ -39,6 +42,7 @@ public sealed class ExecutionService : IExecutionService
         _auditLog = auditLog;
         _requestContext = requestContext;
         _options = options;
+        _secretProvider = secretProvider;
         _timeProvider = timeProvider;
     }
 
@@ -66,10 +70,32 @@ public sealed class ExecutionService : IExecutionService
                 "The operation is disabled or its API definition is not active.");
         }
 
-        if (definition.AuthenticationType != ApiAuthenticationType.None)
+        UpstreamCredential? credential = null;
+        switch (definition.AuthenticationType)
         {
-            return await RejectAsync(operation.Id, ExecutionErrors.UpstreamAuthNotSupported,
-                "Upstream authentication for this API definition is not supported yet.");
+            case ApiAuthenticationType.None:
+                break;
+
+            case ApiAuthenticationType.ApiKey:
+                if (definition.UpstreamSecretName is not { } secretName || definition.ApiKeyHeaderName is not { } headerName)
+                {
+                    return await RejectAsync(operation.Id, ExecutionErrors.UpstreamAuthNotConfigured,
+                        "The API definition uses API key authentication but has no secret reference configured.");
+                }
+
+                if (!_secretProvider.TryGetSecret(secretName, out var secretValue))
+                {
+                    // A server-side configuration problem, not the caller's: reported as 503 without naming the secret.
+                    return await RejectAsync(operation.Id, ExecutionErrors.UpstreamSecretUnavailable,
+                        "The upstream credential is not available.");
+                }
+
+                credential = new UpstreamCredential(headerName, secretValue);
+                break;
+
+            default:
+                return await RejectAsync(operation.Id, ExecutionErrors.UpstreamAuthNotSupported,
+                    "This upstream authentication type is not supported yet.");
         }
 
         var issues = ParameterBinder.Bind(operation, request?.Parameters, out var values);
@@ -90,7 +116,7 @@ public sealed class ExecutionService : IExecutionService
         try
         {
             outcome = await _upstreamClient.SendAsync(
-                new UpstreamRequest(url, TimeSpan.FromSeconds(operation.TimeoutSeconds), operation.MaxResponseBytes),
+                new UpstreamRequest(url, TimeSpan.FromSeconds(operation.TimeoutSeconds), operation.MaxResponseBytes, credential),
                 cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

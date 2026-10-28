@@ -41,6 +41,18 @@ public sealed class ConfigurationSecretProviderTests
         Assert.DoesNotContain(SecretValue, exception.Message);
     }
 
+    [Theory]
+    [InlineData("key\r\nX-Injected: 1")]
+    [InlineData("key\n")]
+    [InlineData("key\0")]
+    public void ValuesWithControlCharacters_StopStartup_WithoutRevealingThem(string value)
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => Create(("weather-api", value)));
+
+        Assert.Contains("weather-api", exception.Message);
+        Assert.DoesNotContain("key", exception.Message.Replace("weather-api", string.Empty, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Values_AreReadOnceAtStartup()
     {

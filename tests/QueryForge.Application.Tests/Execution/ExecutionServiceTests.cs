@@ -12,6 +12,7 @@ namespace QueryForge.Application.Tests.Execution;
 public sealed class ExecutionServiceTests
 {
     private const string SecretValue = "SECRET-VALUE-91c2";
+    private const string UpstreamKey = "UPSTREAM-KEY-3f8a";
     private static readonly DateTimeOffset Now = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
 
     private readonly FakeUpstreamClient _upstream = new();
@@ -102,15 +103,80 @@ public sealed class ExecutionServiceTests
     }
 
     [Theory]
-    [InlineData(ApiAuthenticationType.ApiKey)]
     [InlineData(ApiAuthenticationType.BearerToken)]
     [InlineData(ApiAuthenticationType.Basic)]
-    public async Task UpstreamAuthentication_IsNotSupportedYet(ApiAuthenticationType authenticationType)
+    public async Task BearerAndBasicAuthentication_AreNotSupportedYet(ApiAuthenticationType authenticationType)
     {
         var result = await Create(authenticationType: authenticationType).Service
             .ExecuteAsync("weather", "current", Request("""{"city":"Hanoi"}"""), CancellationToken.None);
 
         AssertRejected(result, ExecutionErrors.UpstreamAuthNotSupported);
+    }
+
+    [Fact]
+    public async Task ApiKey_SendsTheConfiguredSecretInTheConfiguredHeader()
+    {
+        var result = await Create(authenticationType: ApiAuthenticationType.ApiKey, secretName: "weather-api", headerName: "X-API-Key",
+                secrets: new() { ["weather-api"] = UpstreamKey }).Service
+            .ExecuteAsync("weather", "current", Request("""{"city":"Hanoi"}"""), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var credential = Assert.Single(_upstream.Requests).Credential;
+        Assert.NotNull(credential);
+        Assert.Equal("X-API-Key", credential.HeaderName);
+        Assert.Equal(UpstreamKey, credential.Value);
+    }
+
+    [Fact]
+    public async Task ApiKey_WithoutASecretReference_IsNotConfigured()
+    {
+        var result = await Create(authenticationType: ApiAuthenticationType.ApiKey).Service
+            .ExecuteAsync("weather", "current", Request("""{"city":"Hanoi"}"""), CancellationToken.None);
+
+        AssertRejected(result, ExecutionErrors.UpstreamAuthNotConfigured);
+    }
+
+    [Fact]
+    public async Task ApiKey_WithAMissingSecretValue_IsUnavailable_WithoutNamingTheSecret()
+    {
+        var result = await Create(authenticationType: ApiAuthenticationType.ApiKey, secretName: "weather-api", headerName: "X-API-Key").Service
+            .ExecuteAsync("weather", "current", Request("""{"city":"Hanoi"}"""), CancellationToken.None);
+
+        AssertRejected(result, ExecutionErrors.UpstreamSecretUnavailable);
+        Assert.DoesNotContain("weather-api", result.ErrorMessage!);
+    }
+
+    [Fact]
+    public async Task ApiKey_IsCheckedBeforeParameters_SoNoValueIsAuditedOrSent()
+    {
+        var result = await Create(authenticationType: ApiAuthenticationType.ApiKey).Service
+            .ExecuteAsync("weather", "current", Request("""{"city":".."}"""), CancellationToken.None);
+
+        AssertRejected(result, ExecutionErrors.UpstreamAuthNotConfigured);
+    }
+
+    [Fact]
+    public async Task UpstreamKey_NeverAppearsInAuditOrInTheRequestsTextForm()
+    {
+        _upstream.Respond = _ => Result<UpstreamResponse>.Failure(UpstreamErrors.Timeout, "failure");
+
+        await Create(authenticationType: ApiAuthenticationType.ApiKey, secretName: "weather-api", headerName: "X-API-Key",
+                secrets: new() { ["weather-api"] = UpstreamKey }).Service
+            .ExecuteAsync("weather", "current", Request("""{"city":"Hanoi"}"""), CancellationToken.None);
+
+        var sent = Assert.Single(_upstream.Requests);
+        Assert.DoesNotContain(UpstreamKey, sent.ToString());
+        Assert.DoesNotContain(UpstreamKey, sent.Credential!.ToString());
+        var values = _auditLog.Events.SelectMany(item => typeof(AuditEvent).GetProperties().Select(property => property.GetValue(item)?.ToString() ?? string.Empty));
+        Assert.DoesNotContain(values, value => value.Contains(UpstreamKey, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoneAuthentication_SendsNoCredential()
+    {
+        await Create().Service.ExecuteAsync("weather", "current", Request("""{"city":"Hanoi"}"""), CancellationToken.None);
+
+        Assert.Null(Assert.Single(_upstream.Requests).Credential);
     }
 
     [Fact]
@@ -209,9 +275,12 @@ public sealed class ExecutionServiceTests
         ApiDefinitionStatus status = ApiDefinitionStatus.Active,
         bool operationEnabled = true,
         ApiAuthenticationType authenticationType = ApiAuthenticationType.None,
-        string baseUrl = "https://api.example.test")
+        string baseUrl = "https://api.example.test",
+        string? secretName = null,
+        string? headerName = null,
+        Dictionary<string, string>? secrets = null)
     {
-        var definition = ApiDefinition.Create("Weather", "weather", null, baseUrl, status, authenticationType, null, null, Now);
+        var definition = ApiDefinition.Create("Weather", "weather", null, baseUrl, status, authenticationType, null, null, Now, secretName, headerName);
         var operation = ApiOperation.Create(definition.Id, "current", OperationHttpMethod.Get, "/v1/forecast/{city}", 12, 4096, operationEnabled,
         [
             new OperationParameter("city", ParameterLocation.Path, ParameterType.String, true, 64, null, null, null, null, null),
@@ -224,9 +293,16 @@ public sealed class ExecutionServiceTests
             _auditLog,
             new FakeRequestContext(),
             new ExecutionOptions(),
+            new FakeSecretProvider(secrets ?? []),
             new FixedTimeProvider(Now));
 
         return (service, operation);
+    }
+
+    private sealed class FakeSecretProvider(Dictionary<string, string> secrets) : QueryForge.Application.Secrets.ISecretProvider
+    {
+        public bool TryGetSecret(string name, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value) =>
+            secrets.TryGetValue(name, out value);
     }
 
     private static ExecuteOperationRequest Request(string json) =>

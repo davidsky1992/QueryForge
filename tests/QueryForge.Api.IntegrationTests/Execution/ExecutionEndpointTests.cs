@@ -178,6 +178,71 @@ public sealed class ExecutionEndpointTests : ApiTestBase
     }
 
     [Fact]
+    public async Task ApiKeyDefinition_SendsOnlyTheConfiguredSecret_AndItNeverLeaks()
+    {
+        await using var server = LoopbackServer.StartIPv4();
+        server.EnqueueResponse("HTTP/1.1 200 OK\r\nContent-Type: application/json", """{"temp":31}"""u8.ToArray());
+        var simulator = new PublicUpstreamSimulator(server);
+        await using var host = SimulatedHost(simulator);
+        // The upstream header has the same name as QueryForge's own X-Api-Key, so the caller's key must not leak into it.
+        var definition = await CreateDefinitionAsync("keyed", SimulatedBaseUrl, ApiAuthenticationType.ApiKey, QueryForgeApiFactory.UpstreamSecretName, "X-API-Key");
+        await CreateOperationAsync(definition.Id, "current");
+
+        var response = await Execute(host, Factory.ExecutorApiKey, new { city = "Hanoi" }, definition: "keyed");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var head = Assert.Single(server.Requests);
+        var keyLines = head.Split("\r\n").Where(line => line.StartsWith("X-API-Key:", StringComparison.OrdinalIgnoreCase)).ToArray();
+        Assert.Equal([$"X-API-Key: {Factory.UpstreamSecretValue}"], keyLines);
+        Assert.DoesNotContain(Factory.ExecutorApiKey, head);
+        Assert.Single(simulator.Attempts); // sent to the checked base URL host only
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(Factory.UpstreamSecretValue, body);
+        Assert.DoesNotContain(Factory.UpstreamSecretValue, string.Join(Environment.NewLine, response.Headers.Select(header => string.Join(",", header.Value))));
+        Assert.DoesNotContain(Factory.UpstreamSecretValue, string.Join(Environment.NewLine, Factory.Logs.Messages));
+        var audit = await WithDbContextAsync(dbContext => dbContext.AuditEvents.AsNoTracking().Where(item => item.Action == "operation.executed").ToListAsync());
+        var stored = string.Join("|", audit.SelectMany(item => typeof(AuditEvent).GetProperties().Select(property => property.GetValue(item)?.ToString())));
+        Assert.DoesNotContain(Factory.UpstreamSecretValue, stored);
+    }
+
+    [Fact]
+    public async Task ApiKeyDefinition_UpstreamErrorsDoNotRevealTheSecret()
+    {
+        await using var server = LoopbackServer.StartIPv4();
+        server.HoldWhenNoResponse = true;
+        await using var host = SimulatedHost(new PublicUpstreamSimulator(server));
+        var definition = await CreateDefinitionAsync("keyed", SimulatedBaseUrl, ApiAuthenticationType.ApiKey, QueryForgeApiFactory.UpstreamSecretName, "X-API-Key");
+        await CreateOperationAsync(definition.Id, "current", timeoutSeconds: 1);
+
+        var response = await Execute(host, Factory.ExecutorApiKey, new { city = "Hanoi" }, definition: "keyed");
+
+        await AssertCodeAsync(response, HttpStatusCode.GatewayTimeout, "upstream_timeout");
+        Assert.DoesNotContain(Factory.UpstreamSecretValue, await response.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(Factory.UpstreamSecretValue, string.Join(Environment.NewLine, Factory.Logs.Messages));
+    }
+
+    [Fact]
+    public async Task ApiKeyDefinition_WithMissingSecretOrReference_IsRefusedBeforeAnyCall()
+    {
+        await using var server = LoopbackServer.StartIPv4();
+        await using var host = SimulatedHost(new PublicUpstreamSimulator(server));
+        var unset = await CreateDefinitionAsync("unset", SimulatedBaseUrl, ApiAuthenticationType.ApiKey, "not-configured", "X-API-Key");
+        await CreateOperationAsync(unset.Id, "current");
+        var noReference = await CreateDefinitionAsync("noref", SimulatedBaseUrl, ApiAuthenticationType.ApiKey);
+        await CreateOperationAsync(noReference.Id, "current");
+
+        var missingValue = await Execute(host, Factory.ExecutorApiKey, new { city = "Hanoi" }, definition: "unset");
+        var missingReference = await Execute(host, Factory.ExecutorApiKey, new { city = "Hanoi" }, definition: "noref");
+
+        await AssertCodeAsync(missingValue, HttpStatusCode.ServiceUnavailable, "upstream_secret_unavailable");
+        Assert.DoesNotContain("not-configured", await missingValue.Content.ReadAsStringAsync());
+        Assert.Null(missingValue.Headers.RetryAfter);
+        await AssertCodeAsync(missingReference, HttpStatusCode.Conflict, "upstream_auth_not_configured");
+        Assert.Equal(0, server.AcceptedConnections);
+    }
+
+    [Fact]
     public async Task Redirects_AreReportedNotFollowed()
     {
         await using var server = LoopbackServer.StartIPv4();
@@ -463,8 +528,9 @@ public sealed class ExecutionEndpointTests : ApiTestBase
         return definition;
     }
 
-    private Task<ApiDefinitionDto> CreateDefinitionAsync(string slug, string baseUrl, ApiAuthenticationType authentication = ApiAuthenticationType.None) =>
-        CreateAsync(new CreateApiDefinitionRequest($"API {slug}", slug, null, baseUrl, ApiDefinitionStatus.Active, authentication, null, null));
+    private Task<ApiDefinitionDto> CreateDefinitionAsync(
+        string slug, string baseUrl, ApiAuthenticationType authentication = ApiAuthenticationType.None, string? secretName = null, string? headerName = null) =>
+        CreateAsync(new CreateApiDefinitionRequest($"API {slug}", slug, null, baseUrl, ApiDefinitionStatus.Active, authentication, null, null, secretName, headerName));
 
     private async Task CreateOperationAsync(Guid definitionId, string key, bool enabled = true, int timeoutSeconds = 5, int maxResponseBytes = 65536)
     {

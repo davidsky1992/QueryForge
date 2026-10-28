@@ -35,7 +35,14 @@ internal static class ResultMapping
                 Status = StatusCodes.Status409Conflict,
                 Extensions = { ["code"] = Errors.ConcurrencyConflict }
             }),
-            ExecutionErrors.OperationDisabled or ExecutionErrors.UpstreamAuthNotSupported => controller.Conflict(new ProblemDetails
+            ExecutionErrors.UpstreamSecretUnavailable => new ObjectResult(new ProblemDetails
+            {
+                Title = "Upstream credential unavailable",
+                Detail = errorMessage,
+                Status = StatusCodes.Status503ServiceUnavailable,
+                Extensions = { ["code"] = errorCode }
+            }) { StatusCode = StatusCodes.Status503ServiceUnavailable },
+            ExecutionErrors.OperationDisabled or ExecutionErrors.UpstreamAuthNotSupported or ExecutionErrors.UpstreamAuthNotConfigured => controller.Conflict(new ProblemDetails
             {
                 Title = "Operation cannot be executed",
                 Detail = errorMessage,

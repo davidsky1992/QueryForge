@@ -12,8 +12,30 @@ public sealed record ExecuteOperationRequest(IReadOnlyDictionary<string, JsonEle
 /// </summary>
 public sealed record ExecutionResultDto(int UpstreamStatus, string? ContentType, JsonElement? Body, long DurationMs);
 
-/// <summary>A fully built upstream request. The URL has already passed the scheme, port and path checks.</summary>
-public sealed record UpstreamRequest(Uri Url, TimeSpan Timeout, long MaxResponseBytes);
+/// <summary>
+/// A fully built upstream request. The URL has already passed the scheme, port and path checks. The credential, if
+/// any, is sent only with this request, which goes only to the definition's base URL host.
+/// </summary>
+public sealed record UpstreamRequest(Uri Url, TimeSpan Timeout, long MaxResponseBytes, UpstreamCredential? Credential = null);
+
+/// <summary>
+/// An upstream API key and the header it is sent in. Deliberately not a record: a generated ToString would print the
+/// value wherever the request is logged or shown in a test failure, so ToString redacts it.
+/// </summary>
+public sealed class UpstreamCredential
+{
+    public UpstreamCredential(string headerName, string value)
+    {
+        HeaderName = headerName;
+        Value = value;
+    }
+
+    public string HeaderName { get; }
+
+    public string Value { get; }
+
+    public override string ToString() => $"UpstreamCredential {{ HeaderName = {HeaderName}, Value = *** }}";
+}
 
 /// <summary>Sends upstream requests through the hardened HTTP pipeline (destination checks at connection time).</summary>
 public interface IUpstreamClient
@@ -46,5 +68,7 @@ public static class ExecutionErrors
 {
     public const string OperationDisabled = "operation_disabled";
     public const string UpstreamAuthNotSupported = "upstream_auth_not_supported";
+    public const string UpstreamAuthNotConfigured = "upstream_auth_not_configured";
+    public const string UpstreamSecretUnavailable = "upstream_secret_unavailable";
     public const string RequestTooLarge = "request_too_large";
 }
