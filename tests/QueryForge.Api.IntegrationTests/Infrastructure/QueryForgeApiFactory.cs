@@ -115,6 +115,9 @@ public sealed class QueryForgeApiFactory : WebApplicationFactory<Program>, IAsyn
         builder.UseSetting("Security:ApiKeys:2:Roles", ApiKeyRoles.Executor);
         builder.UseSetting($"Execution:Secrets:{UpstreamSecretName}", UpstreamSecretValue);
 
+        // Retention runs in its own test host; here it would delete rows other tests insert with old timestamps.
+        builder.UseSetting("Audit:RetentionEnabled", "false");
+
         foreach (var policy in new[] { "Reads", "Writes", "Anonymous", "Health", "Execute" })
         {
             builder.UseSetting($"RateLimiting:{policy}:PermitLimit", UnrestrictedPermitLimit);

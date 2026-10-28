@@ -30,6 +30,7 @@ public static class DependencyInjection
         services.AddScoped<IApiDefinitionRepository, EfApiDefinitionRepository>();
         services.AddScoped<IApiOperationRepository, EfApiOperationRepository>();
         services.AddScoped<IAuditLog, EfAuditLog>();
+        services.AddScoped<IAuditEventRepository, EfAuditEventRepository>();
 
         // Built now rather than on first use, so invalid secret configuration stops startup.
         services.AddSingleton<ISecretProvider>(new ConfigurationSecretProvider(configuration));

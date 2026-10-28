@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using QueryForge.Application.ApiDefinitions;
 using QueryForge.Application.ApiOperations;
+using QueryForge.Application.Auditing;
 
 namespace QueryForge.Application;
 
@@ -11,6 +12,7 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IApiDefinitionService, ApiDefinitionService>();
         services.AddScoped<IApiOperationService, ApiOperationService>();
+        services.AddScoped<IAuditEventService, AuditEventService>();
 
         return services;
     }

@@ -29,4 +29,5 @@ public static class AuthorizationPolicies
     public const string WriteApiDefinitions = "ApiDefinitions.Write";
     public const string ViewHealthDetails = "Health.Details";
     public const string ExecuteOperations = "Operations.Execute";
+    public const string ReadAuditEvents = "AuditEvents.Read";
 }

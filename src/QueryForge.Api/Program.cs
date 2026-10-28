@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
+using QueryForge.Api.Auditing;
 using QueryForge.Api.Execution;
 using QueryForge.Api.Health;
 using QueryForge.Api.Http;
@@ -22,6 +23,9 @@ builder.Services.AddScoped<IRequestContext, HttpRequestContext>();
 
 // Operation execution (outbound HTTP). The endpoint exists only when Execution:Enabled is true.
 builder.Services.AddOperationExecution(builder.Configuration, builder.Environment);
+
+// Deletes audit events past the retention period (Audit:RetentionDays, default 90).
+builder.Services.AddAuditRetention(builder.Configuration);
 builder.Services.AddApiRateLimiting(builder.Configuration);
 builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
 builder.Services.AddTrustedForwardedHeaders(builder.Configuration);

@@ -41,7 +41,10 @@ public static class SecurityServiceCollectionExtensions
                 .RequireRole(ApiKeyRoles.Admin))
             .AddPolicy(AuthorizationPolicies.ExecuteOperations, policy => policy
                 .AddAuthenticationSchemes(ApiKeyAuthenticationDefaults.Scheme)
-                .RequireRole(ApiKeyRoles.Executor, ApiKeyRoles.Admin));
+                .RequireRole(ApiKeyRoles.Executor, ApiKeyRoles.Admin))
+            .AddPolicy(AuthorizationPolicies.ReadAuditEvents, policy => policy
+                .AddAuthenticationSchemes(ApiKeyAuthenticationDefaults.Scheme)
+                .RequireRole(ApiKeyRoles.Admin));
 
         return services;
     }
