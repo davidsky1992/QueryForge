@@ -180,6 +180,7 @@ Every endpoint requires an API key unless it is explicitly public (fail closed).
 | `GET /api/api-definitions/{id}/operations[/{operationId}]` | `reader` or `admin` key |
 | `POST`, `PUT`, `DELETE` on `/api/api-definitions/{id}/operations` | `admin` key |
 | `POST /api/execute/{definitionSlug}/{operationKey}` | `executor` or `admin` key; **only exists when `Execution:Enabled` is true** (off by default) |
+| `GET /api/audit-events` | `admin` key |
 | `GET /health` (detailed) | `admin` key |
 | `GET /health/live`, `GET /health/ready` | Public |
 | `/swagger` | Public, Development only |
@@ -219,7 +220,7 @@ ASP.NET Core rate limiting with fixed one-minute windows. Exceeding a limit retu
 
 | Policy | Default | Partition | Applies to |
 |---|---|---|---|
-| `Reads` | 120 / min | API key name | `GET` API definitions |
+| `Reads` | 120 / min | API key name | `GET` API definitions, operations and audit events |
 | `Writes` | 30 / min | API key name | `POST`, `PUT`, `DELETE` |
 | `Anonymous` | 30 / min | Client IP | Unauthenticated requests to protected endpoints (counted before the `401`, slowing down key guessing) |
 | `Health` | 60 / min | Client IP | `/health/ready` and `/health` |
@@ -252,7 +253,7 @@ If the record changed since it was read, the API returns `409 Conflict` with `"c
 
 QueryForge can call a registered upstream HTTP API on a caller's behalf. Administrators register **operations**; callers supply **parameter values only**. The URL, method, headers and upstream authentication always come from the registration, never from the caller.
 
-> **Status:** milestone 1 is implemented and tested, but the endpoint is **disabled** (`Execution:Enabled=false`). Enabling it is a separate, explicit decision.
+> **Status:** milestones 1 and 2 are implemented and tested (anonymous and API-key upstreams, audit read endpoint and retention, management and "Try it" UI), but the endpoint is **disabled** (`Execution:Enabled=false`). Enabling it is a separate, explicit decision.
 
 ### Registering an operation (admin)
 
@@ -310,7 +311,8 @@ If the upstream answered, with any status, the response is `200` with a fixed en
 | `401` / `403` | — | Missing or invalid key / key without `executor` or `admin` |
 | `404` | `not_found` | Unknown definition slug or operation key |
 | `409` | `operation_disabled` | Operation disabled, or definition not `Active` |
-| `409` | `upstream_auth_not_supported` | Definition's `authenticationType` is not `None` (milestone 1) |
+| `409` | `upstream_auth_not_configured` | `ApiKey` definition without a secret reference |
+| `409` | `upstream_auth_not_supported` | `BearerToken` or `Basic` authentication (not supported yet) |
 | `413` | `request_too_large` | Request body over 16 KB |
 | `415` | — | Request body is not `application/json` |
 | `429` | — | `Execute` rate limit |
@@ -318,6 +320,7 @@ If the upstream answered, with any status, the response is `200` with a fixed en
 | `502` | `upstream_unreachable` | DNS failure, connection refused, TLS failure |
 | `502` | `upstream_response_too_large` / `upstream_unsupported_content_type` / `upstream_invalid_response` | Over `maxResponseBytes`; not UTF-8 JSON or text; malformed, compressed or truncated response |
 | `503` | `execution_capacity_exceeded` | Too many executions in flight (with `Retry-After`) |
+| `503` | `upstream_secret_unavailable` | The referenced secret has no configured value (server configuration; the secret is not named) |
 | `504` | `upstream_timeout` | No complete response within `timeoutSeconds` |
 | `499` | — | The caller disconnected; the upstream call is cancelled |
 
@@ -330,6 +333,33 @@ If the upstream answered, with any status, the response is `200` with a fixed en
 | `Execution:AllowedPorts` | `80`, `443` | A configured list replaces the defaults |
 | `Execution:MaxConcurrentExecutions` | `20` | Per API instance; requests over the cap get `503` immediately (no queue) |
 | `RateLimiting:Execute` | 60 / min per key | See [Rate Limiting](#rate-limiting) |
+| `Execution:Secrets:<name>` | — | Upstream API key values, referenced by name from `ApiKey` definitions (see below) |
+| `Audit:RetentionDays` | `90` | Audit events older than this are deleted (1–3650; invalid values stop startup) |
+| `Audit:RetentionInterval` | `1.00:00:00` | How often the purge runs (it also runs at startup) |
+| `Audit:RetentionEnabled` | `true` | Turns the purge off |
+
+### Upstream API keys
+
+A definition with `authenticationType` `ApiKey` (1) can reference a secret by name and choose the header the key is sent in:
+
+```json
+{ "authenticationType": 1, "upstreamSecretName": "weather-api", "apiKeyHeaderName": "X-API-Key" }
+```
+
+- **Only the name is stored.** The value comes from configuration, `Execution:Secrets:<name>`, and is never stored in the database, returned by any endpoint, logged, audited or shown in error messages. Responses include `upstreamSecretName`, `apiKeyHeaderName` and `secretConfigured` (whether a value exists).
+- **Header only.** Keys are never put in the URL. The header must be a valid HTTP token and cannot be one QueryForge sets or one that controls routing, framing or client identity (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `User-Agent`, `Accept`, `Forwarded`, `X-Real-IP`, `Proxy-*`, `Sec-*`, `X-Forwarded-*` and similar). `X-API-Key`, `Authorization` or vendor headers such as `Ocp-Apim-Subscription-Key` are fine.
+- **Sent only with the checked request.** The key is attached after the URL has passed all checks, goes only to the definition's base URL host through the guarded connection, and never replaces or mixes with a caller header (a caller's own `X-Api-Key` is never forwarded).
+- **Updates replace the reference.** `PUT` must send `upstreamSecretName` and `apiKeyHeaderName` back to keep them (the frontend does).
+
+Providing values:
+
+| Where | How |
+|---|---|
+| API on the host | `dotnet user-secrets set "Execution:Secrets:weather-api" "<key>" --project src/QueryForge.Api` |
+| Docker Compose | Add `Execution__Secrets__weather-api: "${WEATHER_API_KEY:?}"` to the `api` service environment (for example in a `docker-compose.override.yml`, which holds only this reference) and put `WEATHER_API_KEY=<key>` in the git-ignored `.env` |
+| Azure App Service | App setting `Execution__Secrets__weather-api` as a Key Vault reference |
+
+Values are read **once at startup**. Names must be letters, numbers and hyphens, and values must not contain control characters (such as a trailing line break); either problem stops startup, naming only the secret. **Rotation without downtime:** add the new value under a new name and restart (both names now work), point the definition at the new name, then remove the old value at the next restart. Pointing the definition at the new name is a normal definition update.
 
 ### SSRF protection
 
@@ -356,20 +386,31 @@ How each part is verified (all tests run without internet access):
 
 ### Audit trail
 
-Configuration changes (`operation.created`, `.updated`, `.deleted`, including concurrency rejections) and every execution attempt on an existing operation (`operation.executed`) are written to the `AuditEvents` table. Each row holds the time, the API key **name**, the action, the operation id, the outcome (`Succeeded`, `Failed` or `Rejected`), upstream status, duration, error code and trace id. **No parameter values, bodies, headers, keys or credentials are stored.** Audit rows are written through their own `DbContext`, and are written even if the caller disconnects. If an audit write fails, the failure is logged with identifiers and the request still reports the real outcome. There is no retention policy or read endpoint yet.
+Configuration changes (`operation.created`, `.updated`, `.deleted`, including concurrency rejections) and every execution attempt on an existing operation (`operation.executed`) are written to the `AuditEvents` table. Each row holds the time, the API key **name**, the action, the operation id, the outcome (`Succeeded`, `Failed` or `Rejected`), upstream status, duration, error code and trace id. **No parameter values, bodies, headers, keys or credentials are stored.** Audit rows are written through their own `DbContext`, and are written even if the caller disconnects. If an audit write fails, the failure is logged with identifiers and the request still reports the real outcome.
+
+Admins read the trail with `GET /api/audit-events` (newest first; filters `action`, `targetType`, `targetId`, `outcome`, `from` inclusive and `to` exclusive; `pageSize` 50 by default, at most 100). A background service deletes events older than `Audit:RetentionDays` (90) at startup and then daily, logging only the count; each API instance runs it and the delete is idempotent.
 
 Parameter values are also kept out of logs: `IHttpClientFactory`'s default loggers, which log full URLs, are removed for the upstream client, and the execute action reads its body itself because MVC logs bound action arguments at Trace level.
 
+### User interface
+
+For the selected API definition, the frontend lists, creates, edits and deletes operations (with a parameter table, per-field validation errors and concurrency-conflict reloads) and edits an `ApiKey` definition's secret name and header — never the key itself. **Try it** runs an operation with inputs built from its declared parameters and shows the envelope; the upstream body is untrusted and is rendered only as text, so markup in a response never becomes page content. An empty `404` is reported as "execution is disabled". The **Audit log** panel (admin keys) loads on request with action, outcome and time filters. Parameter values stay in component state only.
+
 ### Limitations
 
-- **Upstream authentication:** only `None` in milestone 1. API-key upstreams (via configuration secret references, never stored in the database) are planned for milestone 2.
+- **Upstream authentication:** `None` and `ApiKey` (header only). `BearerToken` and `Basic` return `upstream_auth_not_supported`.
+- **Upstream responses are returned as they are:** an upstream that echoes its API key (for example in an error body) would expose it to the caller; QueryForge cannot detect that.
+- **Secret values change on restart only;** rotation without downtime uses a new secret name (see above).
+- **Definition changes are not audited** (only operation changes and executions are), so switching a definition's secret reference leaves no audit row.
 - **Limits are per instance:** rate limits and the concurrency cap are kept per API instance and are not shared.
 - **Internal services on public addresses** (hairpin NAT, your own public endpoint, a public host that proxies onward) are not detected. Administrators are trusted to register only intended public hosts; network-level egress rules remain the recommended second layer, and Compose does not configure any.
 - **Static deny-list:** new special-purpose ranges need a code change. NAT64 (`64:ff9b::/96`) is blocked, so an IPv6-only deployment relying on DNS64 cannot reach IPv4-only upstreams.
 - **DNS rebinding** is proven with a fake resolver, not a live rebinding DNS server. On Linux a slow `getaddrinfo` call is abandoned at the timeout rather than aborted.
 - **Defence-in-depth check not tested on its own:** the final check that the built URL is still under `baseUrl` cannot be reached while values are percent-encoded, so no test can trigger it (its mutation survives).
 - **TLS:** tests use plain HTTP on loopback; certificate validation uses the .NET defaults and is only verified as not overridden.
-- **Scope:** GET only, path and query parameters only, no request bodies, no retries, no UI.
+- **Scope:** GET only, path and query parameters only, no request bodies, no retries.
+- **Audit queries** use the time and target indexes; filtering only by action or outcome scans the (90-day) table.
+- **Frontend dev tooling** has accepted dev-only `npm audit` findings (Vitest/tinypool and Vite dev-server issues fixed only in Vite 6+); production dependencies have none. See `docs/PROJECT_STATUS.md`.
 
 ## Running Tests
 
@@ -391,6 +432,12 @@ Run only the tests that do not need Docker:
 dotnet test QueryForge.sln --filter "FullyQualifiedName!~IntegrationTests"
 ```
 
+Frontend tests (Vitest and Testing Library in jsdom; `vitest run` starts no server):
+
+```powershell
+cd src/QueryForge.Web; npm test
+```
+
 Integration test notes:
 
 - One SQL Server container is started per test run, migrated with the real EF Core migrations, and removed afterwards. Each test clears the data before it runs, so tests are independent of order.
@@ -403,7 +450,7 @@ Integration test notes:
 GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on pushes and pull requests to `master`:
 
 - **.NET job:** `dotnet restore`, `dotnet build -c Release`, and `dotnet test` for all three test projects (Docker is available on `ubuntu-latest`). TRX test results are uploaded as an artifact even when tests fail.
-- **Frontend job:** `npm ci` and `npm run build` (TypeScript type-check and Vite build).
+- **Frontend job:** `npm ci`, `npm run build` (TypeScript type-check and Vite build) and `npm test`.
 - **Docker job:** validates `docker-compose.yml` and builds the API, migrator, and web images (nothing is pushed).
 
 Any failing step fails the workflow. The workflow has read-only repository permissions and uses no secrets. In CI (`CI=true`), [Directory.Build.props](Directory.Build.props) treats all warnings — including NuGet vulnerability warnings — as errors. To reproduce locally:

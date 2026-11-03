@@ -1,6 +1,6 @@
 # QueryForge Project Status
 
-Last updated: 2026-10-26
+Last updated: 2026-11-03
 
 ## Completed
 
@@ -332,6 +332,60 @@ Findings during P5 that strengthened tests or code:
 - **Defects found by tests and fixed:** decimal parameter bounds were reported as `1` when created but `1.0000000000` when read back (database scale); MVC Trace logging of bound action arguments would have logged caller parameters, so the execute action reads its body itself.
 - **Mutation that survives by design:** removing the final "URL is still under the base URL" check. Percent-encoding makes the check unreachable, so it stays as defence in depth and is documented as untested on its own.
 
+### P5 – Dynamic API Execution, milestone 2 (2026-11-03)
+
+Upstream API-key authentication through configuration secret references, an admin audit read endpoint with retention, and the frontend for operations, "Try it" and the audit log. **Execution is still disabled** (`Execution:Enabled=false`). Details are in the README sections [Upstream API keys](../README.md#upstream-api-keys), [Audit trail](../README.md#audit-trail) and [User interface](../README.md#user-interface).
+
+Decisions approved before implementation: API keys in a request header only (never the URL); secret values read once at startup (restart to change); a missing secret value answers 503 `upstream_secret_unavailable`; Vitest and Testing Library for the frontend; 90-day audit retention; upstream authentication first.
+
+| Step | Commit | Content | Tests after the step |
+|---|---|---|---|
+| 1 | `37d006a` | Secret references on API definitions (name and header only, two nullable columns, additive migration `AddUpstreamApiKeyReference`); `ConfigurationSecretProvider` over `Execution:Secrets`; header-name rules; `secretConfigured` in responses; frontend keeps the reference on edit | 640 |
+| 2 | `7f7ac1a` | `ApiKey` execution: key sent in the configured header with the checked request only; 409 `upstream_auth_not_configured`, 503 `upstream_secret_unavailable`; redacting `UpstreamCredential.ToString`; secret values with control characters stop startup | 651 |
+| 3 | `2b15903` | `GET /api/audit-events` (admin only, filters, paging) and `AuditRetentionService` (90 days, startup and daily, validated settings) | 669 |
+| 4 | `f547e9a` | Operations management UI; secret name and header fields; Vitest 3.2.6, jsdom and Testing Library; Vite 5.4.21; CI runs `npm test`; fixed definition success messages being cleared | 669 .NET + 16 frontend |
+| 5 | `ac85ba6` | "Try it" panel (typed inputs, envelope, upstream body rendered as text only) and audit log panel | 669 .NET + 38 frontend |
+| 6 | — | Security gate: mutation re-run, README and status documentation (this section) | 669 .NET + 38 frontend |
+
+Current local result: **669 .NET tests** (276 Application, 280 API unit, 113 integration) and **38 frontend tests** passed. The CI counts for the milestone 2 commits have not been confirmed from the run artifacts and logs yet.
+
+**Mutation re-run on the final code (Step 6):**
+
+| Mutation | Result |
+|---|---|
+| Accept forbidden key headers (`Proxy-*`, `Sec-*`, `X-Forwarded-*` prefixes) | Caught (4 tests) |
+| Allow a secret reference for any authentication type | Caught (3) |
+| Accept secret values with control characters | Caught (3) |
+| `UpstreamCredential.ToString` prints the key | Caught (1) |
+| Execute `ApiKey` definitions without the credential | Caught (2) |
+| Never add the credential header upstream | Caught (1, end-to-end) |
+| Answer a missing secret with 409 instead of 503 | Caught (1, integration) |
+| Let reader keys read the audit trail | Caught (1, integration) |
+| Retention also deletes events exactly at the cutoff | Caught (1, integration) |
+| Retention cutoff computed in the future | Caught (1, integration) |
+| Frontend: definition updates drop the secret reference | Caught (2) |
+| Frontend: render the upstream body as HTML (XSS) | Caught (1) |
+| Frontend: report disabled execution as an unknown operation | Caught (1) |
+| Frontend: ignore operation concurrency conflicts | Caught (1) |
+
+Findings during milestone 2:
+- **Defect found by a test and fixed:** definition success messages ("created", "updated", "deleted") were never shown because the reload that followed cleared them (pre-existing since P1).
+- **Test corrected:** the migration test inserted data at the initial schema through the current EF model, which fails once the model has new columns; it now inserts with SQL matching the old schema.
+- **Mutations that were written wrongly at first** (a no-op "409" mutation, constant conditions that do not compile with warnings as errors) were rewritten and then caught. No milestone 2 mutation survives.
+- **Documentation corrected:** an earlier note said switching a definition's secret reference is audited; definition changes are not audited.
+
+**Accepted dev-only `npm audit` findings** (decision: keep Vitest 3.2.6 with Vite 5.4.21 and document). Production dependencies (`npm audit --omit=dev`) have no findings, and none of these packages are in the bundle or the web image:
+
+| Package | Severity | Issue | Why accepted for now | Fixed in |
+|---|---|---|---|---|
+| `tinypool` (via Vitest) | Critical | Prototype-pollution gadgets in worker options leading to code execution | Worker options come from our own configuration, not untrusted input | tinypool 2.1.2 (Vitest 4+, needs Vite 6+) |
+| `@vitest/mocker` | Moderate (2) | Path traversal via redirect mock; code injection via unauthenticated manual-mock registration | Needs a running Vitest server; tests use `vitest run`, which starts none | Vitest 4.1.11 / 4.1.12 |
+| `vitest` | Critical (aggregate) | Rolls up the two entries above | As above | Vitest 4+ |
+| `vite` 5.4.21 | High | Dev-server issues (`server.fs` bypasses, `launch-editor` on Windows, cross-origin script via custom middleware) | Dev server only, bound to `127.0.0.1`; not used in builds served to users | Vite 6.4.4+ |
+| `esbuild`, `@vitejs/plugin-react` | Moderate | Dev-server request reading (esbuild); depends on vulnerable Vite | Dev server only | With the Vite upgrade |
+
+Planned follow-up: upgrade to Vite 6.4.x with a compatible `@vitejs/plugin-react` and a Vitest 4.x release at least two weeks old, as its own step.
+
 ## Continuous integration
 
 Repository: https://github.com/davidsky1992/QueryForge (public, default branch `master`).
@@ -381,23 +435,25 @@ The run reported two non-failing annotations, addressed below: Node.js 20 deprec
 - Redis is not covered by integration tests and is not yet used for business caching.
 - While Redis is down, cache operations wait for StackExchange.Redis timeouts (~5 s); acceptable while nothing uses the cache.
 - Search does not escape `%`/`_` wildcards (parameterized, so not an injection risk).
-- Frontend is a single `App.tsx` component without routing or tests.
+- The frontend has no routing; `App.tsx` still holds the definitions view, with operations, "Try it" and the audit log as separate components.
 - `QueryForge.Api.http` still targets the template `/weatherforecast` endpoint.
-- Operation execution (P5 milestone 1): disabled by default; upstream authentication `None` only; limits per instance; internal services reachable through public addresses are not detected and no network egress rules are configured; static deny-list (NAT64 blocked); DNS rebinding proven with a fake resolver; the final base-URL containment check has no test of its own; TLS not tested separately; GET, path and query parameters only. Details in the README [limitations](../README.md#limitations).
-- `AuditEvents` has no retention policy and no read endpoint.
+- Operation execution (P5): disabled by default; upstream authentication `None` and `ApiKey` (header) only; an upstream that echoes its key in a response would expose it to the caller; secret values change on restart only; definition changes are not audited; limits per instance; internal services reachable through public addresses are not detected and no network egress rules are configured; static deny-list (NAT64 blocked); DNS rebinding proven with a fake resolver; the final base-URL containment check has no test of its own; TLS not tested separately; GET, path and query parameters only. Details in the README [limitations](../README.md#limitations).
+- Audit queries filtered only by action or outcome scan the table (no index for those columns).
+- Dev-only `npm audit` findings are accepted until the Vite 6 / Vitest 4 upgrade (see milestone 2).
 
 ## Next steps
 
 ### 1. Before enabling execution (separate approval)
-P5 milestone 1 is complete with `Execution:Enabled=false`. Turning it on should follow:
-- Confirming the CI test count (593 expected) for the latest commit from the `test-results` artifact, including the real-socket tests on Ubuntu.
+P5 milestones 1 and 2 are complete with `Execution:Enabled=false`. Turning it on should follow:
+- Confirming the CI results for the latest commit: 669 .NET tests from the `test-results` artifact (including the real-socket tests on Ubuntu) and 38 frontend tests from the `Unit tests` step log.
+- Browser checks of the milestone 2 UI (operations, secret fields, "Try it" showing "execution is disabled", audit log for admin and reader keys, no CSP violations).
 - An explicit decision on where it is enabled (local Compose only, or a deployed environment) and, for any deployment, network egress rules as a second layer.
-- Generating an executor key (`scripts/New-QueryForgeApiKey.ps1 -Role executor`) and a manual end-to-end check against a real public test API.
+- Generating an executor key (`scripts/New-QueryForgeApiKey.ps1 -Role executor`) and a manual end-to-end check against a real public test API, with and without an upstream API key.
 
-### 2. P5 milestone 2 (proposed)
-- Upstream API-key authentication through configuration secret references (never stored in the database), with redaction tests.
-- Admin UI for operations and a "try it" panel for executor keys.
-- An admin-only audit read endpoint and a retention policy.
+### 2. Follow-ups
+- Upgrade the frontend toolchain to Vite 6.4.x and Vitest 4.x to clear the accepted dev-only advisories.
+- Audit definition changes as well as operation changes.
+- Consider `BearerToken` upstream authentication with the same secret-reference model.
 
 ### 3. Later
 - Azure deployment: push the API image to Azure Container Registry, provision App Service, Azure SQL, Azure Cache for Redis, and Key Vault (including API key hashes); configure `ForwardedHeaders:KnownProxies` for the App Service front end; run the migration bundle in the pipeline.
