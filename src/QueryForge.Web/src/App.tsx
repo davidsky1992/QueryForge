@@ -6,6 +6,8 @@ import {
   updateApiDefinition
 } from "./api/apiDefinitions";
 import { ApiError, hasApiKey, setApiKey } from "./api/httpClient";
+import { OperationsPanel } from "./components/OperationsPanel";
+import { toMessage } from "./utils/errors";
 import {
   ApiAuthenticationType,
   ApiDefinition,
@@ -100,11 +102,13 @@ export default function App() {
         ? await updateApiDefinition(editing.id, editing.rowVersion, form)
         : await createApiDefinition(form);
 
-      setMessage(editing ? "API definition updated." : "API definition created.");
+      const success = editing ? "API definition updated." : "API definition created.";
       setEditing(null);
       setForm(emptyForm);
       setSelected(saved);
+      // Set after reloading: load() clears the message when it starts.
       await load();
+      setMessage(success);
     } catch (error) {
       await handleMutationError(error);
     }
@@ -117,9 +121,9 @@ export default function App() {
 
     try {
       await deleteApiDefinition(apiDefinition.id, apiDefinition.rowVersion);
-      setMessage("API definition deleted.");
       setSelected(null);
       await load();
+      setMessage("API definition deleted.");
     } catch (error) {
       await handleMutationError(error);
     }
@@ -281,12 +285,24 @@ export default function App() {
                 <dd>{selectedDetails.documentationUrl || "Not set"}</dd>
                 <dt>Tags</dt>
                 <dd>{selectedDetails.tags || "None"}</dd>
+                {selectedDetails.authenticationType === ApiAuthenticationType.ApiKey && (
+                  <>
+                    <dt>Upstream secret</dt>
+                    <dd>
+                      {selectedDetails.upstreamSecretName
+                        ? `${selectedDetails.upstreamSecretName} in ${selectedDetails.apiKeyHeaderName} — ${selectedDetails.secretConfigured ? "configured" : "not configured"}`
+                        : "Not set"}
+                    </dd>
+                  </>
+                )}
               </dl>
             ) : (
               <p className="muted">Create or select an API definition.</p>
             )}
           </aside>
         </section>
+
+        {selectedDetails && <OperationsPanel definition={selectedDetails} />}
       </section>
 
       <aside className="form-panel">
@@ -336,6 +352,19 @@ export default function App() {
               </select>
             </label>
           </div>
+          {form.authenticationType === ApiAuthenticationType.ApiKey && (
+            <div className="field-row">
+              <label>
+                Upstream secret name
+                {/* Only the name of a configured secret; the key itself is never entered here. */}
+                <input value={form.upstreamSecretName} onChange={event => updateForm("upstreamSecretName", event.target.value)} maxLength={64} placeholder="weather-api" />
+              </label>
+              <label>
+                API key header
+                <input value={form.apiKeyHeaderName} onChange={event => updateForm("apiKeyHeaderName", event.target.value)} maxLength={64} placeholder="X-API-Key" />
+              </label>
+            </div>
+          )}
           <label>
             Documentation URL
             <input value={form.documentationUrl} onChange={event => updateForm("documentationUrl", event.target.value)} />
@@ -353,21 +382,3 @@ export default function App() {
   );
 }
 
-function toMessage(error: unknown) {
-  if (error instanceof ApiError) {
-    switch (error.status) {
-      case 401:
-        return "The API key is missing or was not accepted. Enter a valid key.";
-      case 403:
-        return "This API key does not allow that action. Changing API definitions requires an admin key.";
-      case 429:
-        return error.retryAfterSeconds
-          ? `Too many requests. Try again in ${error.retryAfterSeconds} seconds.`
-          : "Too many requests. Try again shortly.";
-      default:
-        return `${error.message} (${error.status})`;
-    }
-  }
-
-  return error instanceof Error ? error.message : "Unexpected error";
-}

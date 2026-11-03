@@ -93,6 +93,10 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+      # Vitest + Testing Library in jsdom; `vitest run` starts no Vitest API or UI server.
+      - name: Unit tests
+        run: npm test
+
   docker:
     name: Docker image builds
     runs-on: ubuntu-24.04
