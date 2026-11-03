@@ -110,6 +110,18 @@ describe("OperationsPanel", () => {
     await waitFor(() => expect(requests.some(request => request.method === "DELETE")).toBe(true));
   });
 
+  it("opens the Try it panel for an operation", async () => {
+    mockFetch([{ method: "GET", path: listPath, status: 200, body: [operation()] }]);
+    const user = userEvent.setup();
+    render(<OperationsPanel definition={definition()} />);
+    await screen.findByText("current");
+
+    await user.click(screen.getByRole("button", { name: "Try" }));
+
+    expect(screen.getByRole("region", { name: "Try current" })).toBeInTheDocument();
+    expect(screen.getByLabelText("city *")).toBeInTheDocument();
+  });
+
   it("explains a 403 for non-admin keys", async () => {
     mockFetch([
       { method: "GET", path: listPath, status: 200, body: [] },

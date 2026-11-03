@@ -12,6 +12,7 @@ import {
   parameterTypeLabels
 } from "../types/operation";
 import { toMessage, validationMessages } from "../utils/errors";
+import { TryItPanel } from "./TryItPanel";
 
 const emptyParameter: ParameterFormValues = {
   name: "",
@@ -46,10 +47,12 @@ export function OperationsPanel({ definition }: Props) {
   const [form, setForm] = useState<OperationFormValues | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
+  const [trying, setTrying] = useState<ApiOperation | null>(null);
 
   useEffect(() => {
     setForm(null);
     setEditing(null);
+    setTrying(null);
     setMessage(null);
     void load();
   }, [definition.id]);
@@ -207,6 +210,7 @@ export function OperationsPanel({ definition }: Props) {
               <td>{operation.parameters.map(parameter => parameter.name).join(", ") || "None"}</td>
               <td>{operation.enabled ? "Yes" : "No"}</td>
               <td className="row-actions">
+                <button type="button" onClick={() => setTrying(operation)}>Try</button>
                 <button type="button" onClick={() => startEdit(operation)}>Edit</button>
                 <button type="button" className="danger" onClick={() => void handleDelete(operation)}>Delete</button>
               </td>
@@ -219,6 +223,8 @@ export function OperationsPanel({ definition }: Props) {
           )}
         </tbody>
       </table>
+
+      {trying && <TryItPanel key={trying.id} definitionSlug={definition.slug} operation={trying} onClose={() => setTrying(null)} />}
 
       {form && (
         <form className="operation-form" aria-label={editing ? `Edit operation ${editing.key}` : "New operation"} onSubmit={event => void handleSubmit(event)}>

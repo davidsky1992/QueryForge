@@ -6,6 +6,7 @@ import {
   updateApiDefinition
 } from "./api/apiDefinitions";
 import { ApiError, hasApiKey, setApiKey } from "./api/httpClient";
+import { AuditPanel } from "./components/AuditPanel";
 import { OperationsPanel } from "./components/OperationsPanel";
 import { toMessage } from "./utils/errors";
 import {
@@ -303,6 +304,8 @@ export default function App() {
         </section>
 
         {selectedDetails && <OperationsPanel definition={selectedDetails} />}
+
+        {hasApiKey() && <AuditPanel />}
       </section>
 
       <aside className="form-panel">

@@ -346,6 +346,36 @@ label {
   min-height: auto;
 }
 
+.try-it {
+  margin-top: 16px;
+  border-top: 1px solid #e5eaf0;
+  padding-top: 16px;
+}
+
+.execution-result pre {
+  max-height: 360px;
+  overflow: auto;
+  background: #f5f7f9;
+  border: 1px solid #e5eaf0;
+  border-radius: 6px;
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.audit-panel {
+  margin-top: 18px;
+  background: #ffffff;
+  border: 1px solid #d6dde3;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.audit-filters {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+}
+
 .field-errors {
   color: #a33b2f;
   margin: 0 0 14px;
